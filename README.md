@@ -29,16 +29,26 @@ Built in Rust with [`ratatui`](https://ratatui.rs) (rendering),
 
 ## Install
 
-Requires the Rust toolchain. If you don't have it:
+### Prebuilt binary (macOS / Linux)
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/epatel/terminal_pad/releases/latest/download/terminal_pad-installer.sh | sh
 ```
 
-Then build:
+On macOS, a downloaded binary may be quarantined by Gatekeeper. If you see
+"cannot be verified", clear the flag once:
 
 ```sh
-cargo build --release
+xattr -d com.apple.quarantine "$(command -v terminal_pad)"
+```
+
+### From source
+
+Requires the Rust toolchain (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`):
+
+```sh
+cargo build --release   # or: make release
 # binary at target/release/terminal_pad
 ```
 
