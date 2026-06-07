@@ -13,7 +13,7 @@ Cursor writes, the Insert/Overwrite mode, and how typed text lands on the canvas
 - `delete(app)` — delete the cell under the cursor (reflow in Insert, gap in Overwrite); cursor stays.
 - `newline(app)` — `cursor = (anchor_x, cursor.y + 1)`.
 - `toggle_mode(app)` — flip Insert/Overwrite (no canvas change).
-- `paste(app, text)` — drop a rectangular block at the cursor (M6): line `i` at `cursor.y + i` from `cursor.x`, `\r\n` normalized to `\n`. **Block placement** — overwrites covered cells regardless of mode, never pushes content down; cursor ends at the end of the last pasted line.
+- `paste(app, text)` — drop a rectangular block at the cursor (M6): line `i` at `cursor.y + i` from `cursor.x`; `\r\n` and bare `\r` line endings normalized to `\n` (terminals send `\r` in bracketed paste). **Block placement** — overwrites covered cells regardless of mode, never pushes content down; cursor ends at the end of the last pasted line.
 
 Key dispatch lives in `main::handle_key`; printable input is ignored when Ctrl/Alt is held. Paste arrives as one `Event::Paste(String)` (bracketed paste, enabled in `main::setup_terminal`) and is routed to `paste`.
 

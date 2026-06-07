@@ -73,13 +73,16 @@ pub fn toggle_mode(app: &mut App) {
 /// the paste lands at `cursor.y + i`, starting at `cursor.x`. v1 = block
 /// placement — it overwrites the cells it covers (regardless of Insert/Overwrite)
 /// and does not push existing content down. The cursor ends at the end of the
-/// last pasted line. `\r\n` line endings are normalized to `\n`.
+/// last pasted line. `\r\n` and bare `\r` line endings are normalized to `\n`.
 pub fn paste(app: &mut App, text: &str) {
     let (cx, cy) = app.cursor;
+    // Normalize line endings before splitting. Terminals commonly send bracketed
+    // paste with bare `\r` (or `\r\n`) as the line break, not `\n` — without this
+    // a multi-line paste collapses onto a single row.
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut last_line_len = 0;
     let mut line_count = 0;
-    for (i, raw) in text.split('\n').enumerate() {
-        let line = raw.strip_suffix('\r').unwrap_or(raw);
+    for (i, line) in normalized.split('\n').enumerate() {
         let y = cy + i as crate::canvas::Coord;
         let mut x = cx;
         for ch in line.chars() {
@@ -235,5 +238,15 @@ mod tests {
         paste(&mut app, "a\r\nb");
         assert_eq!(row(&app, 0), "a");
         assert_eq!(row(&app, 1), "b");
+    }
+
+    #[test]
+    fn paste_splits_on_bare_cr() {
+        let mut app = App::new();
+        paste(&mut app, "a\rb\rc"); // terminal-style line breaks
+        assert_eq!(row(&app, 0), "a");
+        assert_eq!(row(&app, 1), "b");
+        assert_eq!(row(&app, 2), "c");
+        assert_eq!(app.cursor, (1, 2));
     }
 }
