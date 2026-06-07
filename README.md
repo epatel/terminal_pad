@@ -1,3 +1,5 @@
+<a href="https://claude.ai"><img src="made-with-claude.png" height="32" alt="Made with Claude"></a>
+
 # terminal_pad
 
 A terminal (TUI) text pad over an **infinite 2D canvas**. Paste and edit text
