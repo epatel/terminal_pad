@@ -1,6 +1,6 @@
 ## About this project
 
-terminal_pad is a terminal (TUI) application offering an **infinite 2D canvas** you can paste and edit text on, navigate with arrow keys (Shift jumps the view by 1/3 of a screen), toggle insert/overwrite with **Ctrl+I**, and bookmark up to nine canvas locations on **Ctrl+1..9** (Ctrl+Shift+1..9 saves the current cursor+view). Target stack: **Rust** with `ratatui` (render) + `crossterm` (input/terminal) + `serde` (persistence). Single self-contained binary.
+terminal_pad is a terminal (TUI) application offering an **infinite 2D canvas** you can paste and edit text on, navigate with arrow keys (Shift jumps the view by 1/3 of a screen), toggle insert/overwrite with **Ctrl+I**, and bookmark up to nine canvas locations on **Ctrl+1..9** (Ctrl+Shift+1..9 saves the current cursor+view), and zoom out to a minimap overview with **Ctrl+Z**. Target stack: **Rust** with `ratatui` (render) + `crossterm` (input/terminal) + `serde` (persistence). Single self-contained binary.
 
 The live build state, milestones, and open questions live in @project-plan.md — read it first.
 
@@ -14,4 +14,4 @@ The live build state, milestones, and open questions live in @project-plan.md �
 - [decision-sparse-grid](cards/decision-sparse-grid.md) — how the infinite canvas is stored in memory
 
 ### Features
-> All features are documented in their co-located `src/<feature>/CLAUDE.md` (auto-discovered): **canvas**, **viewport**, **render**, **editing**, **locations**, **persistence**. No feature cards live here.
+> All features are documented in their co-located `src/<feature>/CLAUDE.md` (auto-discovered): **canvas**, **viewport**, **render**, **editing**, **locations**, **persistence**, **overview**. No feature cards live here.

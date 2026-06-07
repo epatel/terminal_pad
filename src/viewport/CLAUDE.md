@@ -14,13 +14,13 @@ Visible rectangle: `[origin.x, origin.x+width)` × `[origin.y, origin.y+height)`
 
 ## Navigation (M4)
 - `step() -> (Coord, Coord)` — the one-third-screen jump distance (`width/3`, `height/3`), floored at 1 each axis.
-- `jump(dx, dy)` — move `origin` by whole `step`s (Shift+arrow). Cursor untouched, so it may scroll off-screen — the spec's "move canvas view" gesture.
+- `jump(dx, dy)` — move `origin` by whole `step`s. The viewport primitive; the cursor is moved separately by the caller.
 - `scroll_to_show((cx, cy))` — cursor-follow: scroll the minimum to bring the cursor back inside the visible rect.
-- Wiring: key dispatch lives in `main::handle_key`; `App::move_cursor` (arrows → move + `scroll_to_show`) and `App::jump_view` (Shift+arrow → `jump`) drive it. **Resize** is handled in the event loop: re-sync `width`/`height` (minus the status row) then `scroll_to_show`.
+- Wiring: key dispatch lives in `main::handle_key`. `App::move_cursor` (arrows → move + `scroll_to_show`); `App::jump_view` (Shift+arrow → `jump` **and** carry the cursor the same delta, so it keeps its screen position and reversing returns to start); `App::pan_view` (overview arrows → move view+cursor by a screenful). **Resize** is handled in the event loop: re-sync `width`/`height` (minus the status row) then `scroll_to_show`.
 
 ## Invariants
 - The canvas is infinite, so `origin` may go negative; there is no clamping against canvas extent — only cursor-follow.
-- Plain arrows move the cursor; Shift+arrows move the view. They must stay distinct.
+- Plain arrows move the cursor one cell (view follows); Shift+arrows pan the view by 1/3 screen and carry the cursor with it. The cursor therefore stays on screen after either.
 - Off-by-one: the last visible column is `origin.x + width - 1`.
 
 ## Ownership

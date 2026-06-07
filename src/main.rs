@@ -14,6 +14,7 @@ mod app;
 mod canvas;
 mod editing;
 mod locations;
+mod overview;
 mod persistence;
 mod render;
 mod viewport;
@@ -36,6 +37,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use app::App;
+use overview::ZoomMode;
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -137,10 +139,40 @@ fn should_quit(key: &KeyEvent) -> bool {
         || (key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL))
 }
 
-/// Navigation (M4): plain arrows move the cursor (cursor-follow scroll);
-/// Shift+arrow jumps the view by one-third of a screen.
+/// Save to the app's path and report the result in the status line.
+fn save_now(app: &mut App) {
+    app.status = match persistence::save(&app.path, app) {
+        Ok(()) => format!("saved {}", app.path.display()),
+        Err(e) => format!("save failed: {e}"),
+    };
+}
+
+/// Route a key press. Ctrl+Z toggles the overview; while zoomed out only save
+/// and toggle are accepted (it's a read-only view). Otherwise: navigation (M4),
+/// editing (M5/M6), and bookmarks (M7).
 fn handle_key(app: &mut App, key: &KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+    // Ctrl+Z toggles overview in either mode.
+    if ctrl && key.code == KeyCode::Char('z') {
+        app.toggle_zoom();
+        return;
+    }
+    // In the overview, arrows pan the view (and cursor) by a screenful for quick
+    // navigation; saving is allowed; editing is not.
+    if app.zoom == ZoomMode::Overview {
+        match key.code {
+            KeyCode::Left => app.pan_view(-1, 0),
+            KeyCode::Right => app.pan_view(1, 0),
+            KeyCode::Up => app.pan_view(0, -1),
+            KeyCode::Down => app.pan_view(0, 1),
+            KeyCode::Char('s') if ctrl => save_now(app),
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Left => {
             if shift {
@@ -172,25 +204,15 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         }
         // Insert/Overwrite toggle. Ctrl+I needs a terminal that distinguishes it
         // from Tab (Kitty keyboard protocol — see notes).
-        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            editing::toggle_mode(app)
-        }
+        KeyCode::Char('i') if ctrl => editing::toggle_mode(app),
         // Ctrl+S — save now.
-        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.status = match persistence::save(&app.path, app) {
-                Ok(()) => format!("saved {}", app.path.display()),
-                Err(e) => format!("save failed: {e}"),
-            };
-        }
+        KeyCode::Char('s') if ctrl => save_now(app),
         KeyCode::Backspace => editing::backspace(app),
         KeyCode::Delete => editing::delete(app),
         KeyCode::Enter => editing::newline(app),
         // Locations: Ctrl+1..9 jump, Ctrl+Shift+1..9 save. Needs a terminal that
         // reports Ctrl+digit modifiers (Kitty keyboard protocol — see notes).
-        KeyCode::Char(c)
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                && locations::slot_for_digit(c).is_some() =>
-        {
+        KeyCode::Char(c) if ctrl && locations::slot_for_digit(c).is_some() => {
             let slot = locations::slot_for_digit(c).unwrap();
             if shift {
                 locations::save(app, slot)

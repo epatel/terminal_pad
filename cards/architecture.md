@@ -43,12 +43,14 @@ flowchart LR
 - `src/canvas/` — sparse grid + edit ops (the model)
 - `src/viewport/` — scroll math, cursor-follow
 - `src/editing/` — cursor, insert/overwrite, paste insertion
-- `src/locations/` — F1–F10 bookmarks
+- `src/locations/` — Ctrl+1..9 bookmarks (cursor + view)
 - `src/persistence/` — load/save canvas + bookmarks (serde_json)
 - `src/render/` — ratatui drawing
+- `src/overview/` — Ctrl+Z zoomed-out minimap
+- `src/app.rs` — shared state (canvas, viewport, cursor, mode, bookmarks, zoom, path)
 - `src/main.rs` — terminal lifecycle (raw mode, alt screen, panic-safe restore) + the loop above
 
-Each feature directory gets its own co-located `CLAUDE.md` once code lands; until then the feature cards under `cards/` hold the contracts.
+Each feature directory has its own co-located `CLAUDE.md`.
 
 ## Deployment
 `cargo build --release` → one binary. No runtime, no external services. Persistence is a single local file.

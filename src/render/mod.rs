@@ -14,6 +14,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::canvas::Canvas;
+use crate::overview::{self, ZoomMode};
 use crate::viewport::Viewport;
 
 /// Rows reserved at the bottom for the status line.
@@ -28,6 +29,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // resize is absorbed here without a separate handler until M4 adds clamping.
     app.viewport.width = canvas_area.width;
     app.viewport.height = canvas_area.height;
+
+    if app.zoom == ZoomMode::Overview {
+        let map = overview::rows(
+            &app.canvas,
+            &app.viewport,
+            canvas_area.width,
+            canvas_area.height,
+        );
+        frame.render_widget(Paragraph::new(map.join("\n")), canvas_area);
+        let status = format!(
+            " OVERVIEW   {} cells   {}   ·   ^Z back · ^S save · Esc/^Q quit ",
+            app.canvas.len(),
+            app.status,
+        );
+        frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
+        return; // no text cursor in the overview
+    }
 
     let rows = window_rows(&app.canvas, &app.viewport);
     frame.render_widget(Paragraph::new(rows.join("\n")), canvas_area);
