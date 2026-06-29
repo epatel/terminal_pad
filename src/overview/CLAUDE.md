@@ -4,7 +4,7 @@ A whole-canvas density map, toggled by **Ctrl+Z**. Triggered when working on zoo
 
 ## Behavior
 - **Ctrl+Z** toggles `App::zoom` between `Normal` and `Overview` (handled in `main::handle_key`, works in either mode).
-- **Arrows** pan the underlying view (and cursor) by a screenful (`App::pan_view`) for quick navigation — zooming back in lands you at the new spot.
+- **Arrows** pan the underlying view (and cursor) by a screenful (`App::pan_view`) for quick navigation — zooming back in lands you at the new spot. **Shift+arrows** pan by 1/3 screen (`App::jump_view`), the same gesture as in the normal editor.
 - Otherwise read-only: editing keys are ignored; Ctrl+S still saves; Esc/Ctrl+Q still quit (checked before dispatch).
 
 ## Rendering (`overview::rows`, pure)

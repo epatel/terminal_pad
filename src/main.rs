@@ -209,10 +209,15 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         app.toggle_zoom();
         return;
     }
-    // In the overview, arrows pan the view (and cursor) by a screenful for quick
-    // navigation; saving is allowed; editing is not.
+    // In the overview, plain arrows pan the view (and cursor) by a screenful for
+    // quick navigation; Shift+arrows pan by 1/3 screen, the same gesture as in the
+    // normal editor. Saving is allowed; editing is not.
     if app.zoom == ZoomMode::Overview {
         match key.code {
+            KeyCode::Left if shift => app.jump_view(-1, 0),
+            KeyCode::Right if shift => app.jump_view(1, 0),
+            KeyCode::Up if shift => app.jump_view(0, -1),
+            KeyCode::Down if shift => app.jump_view(0, 1),
             KeyCode::Left => app.pan_view(-1, 0),
             KeyCode::Right => app.pan_view(1, 0),
             KeyCode::Up => app.pan_view(0, -1),
