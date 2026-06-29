@@ -5,6 +5,7 @@
 //! ./CLAUDE.md for the contract.
 
 use crate::app::App;
+use crate::canvas::{Canvas, Coord};
 
 /// Whether typing inserts (shifting the row right) or overwrites in place.
 /// Toggled by Ctrl+I.
@@ -61,6 +62,74 @@ pub fn delete(app: &mut App) {
 /// the cursor is repositioned by navigation).
 pub fn newline(app: &mut App) {
     app.cursor = (app.anchor_x, app.cursor.1 + 1);
+    app.viewport.scroll_to_show(app.cursor);
+}
+
+/// Jump the cursor to the start of the next word on its row (Option/Alt+Right).
+/// A word is a maximal run of non-whitespace cells; blanks and whitespace cells
+/// separate them. From inside a word this lands on the next word's first cell;
+/// past the last word it lands one column after the final word char
+/// (end-of-content). No movement on a row with no words.
+pub fn word_right(app: &mut App) {
+    let (x, y) = app.cursor;
+    let starts = word_starts(&app.canvas, y);
+    let target = starts.iter().copied().find(|&s| s > x).or_else(|| {
+        last_populated(&app.canvas, y)
+            .map(|m| m + 1)
+            .filter(|&t| t > x)
+    });
+    if let Some(tx) = target {
+        move_cursor_x(app, tx);
+    }
+}
+
+/// Jump the cursor to the start of the previous word on its row (Option/Alt+Left).
+/// From inside a word this lands on that word's first cell; from a word start it
+/// lands on the previous word's start. No movement when no word lies to the left.
+pub fn word_left(app: &mut App) {
+    let (x, y) = app.cursor;
+    let starts = word_starts(&app.canvas, y);
+    if let Some(tx) = starts.iter().copied().rev().find(|&s| s < x) {
+        move_cursor_x(app, tx);
+    }
+}
+
+/// Word-character columns on row `y`, ascending: populated cells whose char is
+/// not whitespace. A typed space *is* a stored cell, so whitespace — not just an
+/// absent cell — separates words. `canvas.cells()` is sorted by `(y, x)`.
+fn word_positions(canvas: &Canvas, y: Coord) -> Vec<Coord> {
+    canvas
+        .cells()
+        .into_iter()
+        .filter(|&(_, cy, c)| cy == y && !c.is_whitespace())
+        .map(|(x, _, _)| x)
+        .collect()
+}
+
+/// Columns that begin a word on row `y`: a word column whose left neighbor is not
+/// a word column (a gap, a blank, or whitespace marks the boundary).
+fn word_starts(canvas: &Canvas, y: Coord) -> Vec<Coord> {
+    let mut starts = Vec::new();
+    let mut prev: Option<Coord> = None;
+    for x in word_positions(canvas, y) {
+        if prev != Some(x - 1) {
+            starts.push(x);
+        }
+        prev = Some(x);
+    }
+    starts
+}
+
+/// Rightmost word column on row `y`, or `None` if the row has no word chars.
+fn last_populated(canvas: &Canvas, y: Coord) -> Option<Coord> {
+    word_positions(canvas, y).into_iter().next_back()
+}
+
+/// Reposition the cursor to column `tx` (same row), resetting the line anchor and
+/// scrolling to keep it visible — matching `App::move_cursor`'s navigation rules.
+fn move_cursor_x(app: &mut App, tx: Coord) {
+    app.cursor.0 = tx;
+    app.anchor_x = tx;
     app.viewport.scroll_to_show(app.cursor);
 }
 
@@ -203,6 +272,73 @@ mod tests {
         assert_eq!(app.mode, EditMode::Overwrite);
         toggle_mode(&mut app);
         assert_eq!(app.mode, EditMode::Insert);
+    }
+
+    #[test]
+    fn word_right_steps_word_to_word_then_to_end() {
+        let mut app = App::new();
+        type_str(&mut app, "foo bar baz"); // words at 0, 4, 8; ends at 11
+        app.cursor = (0, 0);
+        word_right(&mut app);
+        assert_eq!(app.cursor.0, 4); // start of "bar"
+        word_right(&mut app);
+        assert_eq!(app.cursor.0, 8); // start of "baz"
+        word_right(&mut app);
+        assert_eq!(app.cursor.0, 11); // one past the last cell (end-of-content)
+        word_right(&mut app);
+        assert_eq!(app.cursor.0, 11); // nothing further → no movement
+    }
+
+    #[test]
+    fn word_right_from_mid_word_jumps_to_next_word() {
+        let mut app = App::new();
+        type_str(&mut app, "foo bar");
+        app.cursor = (1, 0); // inside "foo"
+        word_right(&mut app);
+        assert_eq!(app.cursor.0, 4); // start of "bar", not end of "foo"
+    }
+
+    #[test]
+    fn word_left_lands_on_word_starts() {
+        let mut app = App::new();
+        type_str(&mut app, "foo bar baz");
+        app.cursor = (11, 0); // end-of-content
+        word_left(&mut app);
+        assert_eq!(app.cursor.0, 8); // "baz"
+        word_left(&mut app);
+        assert_eq!(app.cursor.0, 4); // "bar"
+        word_left(&mut app);
+        assert_eq!(app.cursor.0, 0); // "foo"
+        word_left(&mut app);
+        assert_eq!(app.cursor.0, 0); // nothing to the left → no movement
+    }
+
+    #[test]
+    fn word_left_from_mid_word_goes_to_its_start() {
+        let mut app = App::new();
+        type_str(&mut app, "foo bar");
+        app.cursor = (5, 0); // inside "bar"
+        word_left(&mut app);
+        assert_eq!(app.cursor.0, 4); // start of "bar"
+    }
+
+    #[test]
+    fn word_jump_handles_gaps_and_empty_rows() {
+        let mut app = App::new();
+        // Words separated by a multi-cell gap: "ab" at 0-1, "cd" at 5-6.
+        app.canvas.set(0, 0, 'a');
+        app.canvas.set(1, 0, 'b');
+        app.canvas.set(5, 0, 'c');
+        app.canvas.set(6, 0, 'd');
+        app.cursor = (0, 0);
+        word_right(&mut app);
+        assert_eq!(app.cursor.0, 5); // skips the gap to "cd"
+        // Empty row: no movement either way.
+        app.cursor = (3, 9);
+        word_right(&mut app);
+        assert_eq!(app.cursor, (3, 9));
+        word_left(&mut app);
+        assert_eq!(app.cursor, (3, 9));
     }
 
     #[test]

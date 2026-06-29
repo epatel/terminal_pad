@@ -148,12 +148,14 @@ fn save_now(app: &mut App) {
     };
 }
 
-/// Route a key press. Ctrl+Z toggles the overview; while zoomed out only save
-/// and toggle are accepted (it's a read-only view). Otherwise: navigation (M4),
-/// editing (M5/M6), and bookmarks (M7).
+/// Route a key press. Ctrl+H toggles the help overlay (any key dismisses it);
+/// Ctrl+Z toggles the overview; while zoomed out only save and toggle are
+/// accepted (it's a read-only view). Otherwise: navigation (M4, plus Alt+Left/
+/// Right word jump), editing (M5/M6), and bookmarks (M7).
 fn handle_key(app: &mut App, key: &KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
 
     // Help overlay: Ctrl+H toggles it; while it's showing any key dismisses it
     // (it's a read-only cheat sheet). Checked before everything else.
@@ -187,14 +189,18 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
 
     match key.code {
         KeyCode::Left => {
-            if shift {
+            if alt {
+                editing::word_left(app)
+            } else if shift {
                 app.jump_view(-1, 0)
             } else {
                 app.move_cursor(-1, 0)
             }
         }
         KeyCode::Right => {
-            if shift {
+            if alt {
+                editing::word_right(app)
+            } else if shift {
                 app.jump_view(1, 0)
             } else {
                 app.move_cursor(1, 0)

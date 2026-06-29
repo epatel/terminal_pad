@@ -8,6 +8,7 @@
 /// pair renders as a blank spacer row.
 const BINDINGS: &[(&str, &str)] = &[
     ("Arrows", "move cursor"),
+    ("Opt+Left/Right", "jump word back / forward"),
     ("Shift+Arrows", "pan view by 1/3 screen"),
     ("", ""),
     ("Ctrl+I", "toggle Insert / Overwrite"),
