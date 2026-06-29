@@ -29,6 +29,8 @@ pub struct App {
     pub status: String,
     /// Normal editor vs. zoomed-out overview (Ctrl+Z).
     pub zoom: ZoomMode,
+    /// Whether the Ctrl+H keybinding cheat-sheet overlay is showing.
+    pub help: bool,
 }
 
 impl App {
@@ -43,6 +45,7 @@ impl App {
             path: PathBuf::from("canvas.tpad"),
             status: String::new(),
             zoom: ZoomMode::Normal,
+            help: false,
         }
     }
 

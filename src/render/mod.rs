@@ -14,6 +14,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::canvas::Canvas;
+use crate::help;
 use crate::overview::{self, ZoomMode};
 use crate::viewport::Viewport;
 
@@ -29,6 +30,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // resize is absorbed here without a separate handler until M4 adds clamping.
     app.viewport.width = canvas_area.width;
     app.viewport.height = canvas_area.height;
+
+    if app.help {
+        let panel = help::rows(canvas_area.width, canvas_area.height);
+        frame.render_widget(Paragraph::new(panel.join("\n")), canvas_area);
+        let status = format!(" HELP   ·   {}   ·   press any key to close ", app.status);
+        frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
+        return; // no text cursor while the cheat sheet is up
+    }
 
     if app.zoom == ZoomMode::Overview {
         let map = overview::rows(
@@ -57,7 +66,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .filter_map(|(i, slot)| slot.map(|_| char::from_digit(i as u32 + 1, 10).unwrap()))
         .collect();
     let status = format!(
-        " {}   cursor ({}, {})   cells {}   marks [{}]   {}   ·   ^S save · ^1-9 jump / ^⇧1-9 save · ^I mode · Esc/^Q quit ",
+        " {}   cursor ({}, {})   cells {}   marks [{}]   {}   ·   ^H help · ^S save · ^1-9 jump / ^⇧1-9 save · ^I mode · Esc/^Q quit ",
         app.mode.label(),
         app.cursor.0,
         app.cursor.1,

@@ -13,6 +13,7 @@
 mod app;
 mod canvas;
 mod editing;
+mod help;
 mod locations;
 mod overview;
 mod persistence;
@@ -153,6 +154,17 @@ fn save_now(app: &mut App) {
 fn handle_key(app: &mut App, key: &KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+    // Help overlay: Ctrl+H toggles it; while it's showing any key dismisses it
+    // (it's a read-only cheat sheet). Checked before everything else.
+    if app.help {
+        app.help = false;
+        return;
+    }
+    if ctrl && key.code == KeyCode::Char('h') {
+        app.help = true;
+        return;
+    }
 
     // Ctrl+Z toggles overview in either mode.
     if ctrl && key.code == KeyCode::Char('z') {
