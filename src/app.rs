@@ -76,6 +76,22 @@ impl App {
         self.anchor_x = self.cursor.0;
     }
 
+    /// Place the cursor at the canvas cell under a click at screen offset
+    /// `(sx, sy)` within the canvas drawing area. Resets the line anchor like the
+    /// arrow keys; `scroll_to_show` is a no-op here (the cell is already visible).
+    pub fn click_to(&mut self, sx: u16, sy: u16) {
+        let (x, y) = self.viewport.canvas_at(sx, sy);
+        self.cursor = (x, y);
+        self.anchor_x = x;
+        self.viewport.scroll_to_show(self.cursor);
+    }
+
+    /// Pan the view vertically by `d` rows (scroll wheel) without moving the
+    /// cursor — the content scrolls under it, like a terminal's own scrollback.
+    pub fn scroll_rows(&mut self, d: Coord) {
+        self.viewport.origin.1 += d;
+    }
+
     /// Pan the view by whole screenfuls (overview arrows), carrying the cursor the
     /// same distance. Used for quick navigation while zoomed out.
     pub fn pan_view(&mut self, dx: i64, dy: i64) {
@@ -125,6 +141,26 @@ mod tests {
         app.jump_view(-1, 0);
         assert_eq!(app.viewport.origin, (0, 0));
         assert_eq!(app.cursor, (0, 0)); // reversing lands back at the start
+    }
+
+    #[test]
+    fn click_positions_cursor_at_canvas_cell() {
+        let mut app = sized_app(80, 24);
+        app.viewport.origin = (10, 5);
+        app.click_to(3, 2);
+        assert_eq!(app.cursor, (13, 7)); // origin + screen offset
+        assert_eq!(app.anchor_x, 13); // anchor follows, like arrow nav
+    }
+
+    #[test]
+    fn scroll_rows_pans_view_without_moving_cursor() {
+        let mut app = sized_app(80, 24);
+        app.cursor = (4, 4);
+        app.scroll_rows(3);
+        assert_eq!(app.viewport.origin, (0, 3));
+        assert_eq!(app.cursor, (4, 4)); // cursor stays put
+        app.scroll_rows(-3);
+        assert_eq!(app.viewport.origin, (0, 0));
     }
 
     #[test]

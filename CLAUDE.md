@@ -1,6 +1,6 @@
 ## About this project
 
-terminal_pad is a terminal (TUI) application offering an **infinite 2D canvas** you can paste and edit text on, navigate with arrow keys (Shift jumps the view by 1/3 of a screen, Option/Alt+Left/Right jumps by a word), toggle insert/overwrite with **Ctrl+I**, and bookmark up to nine canvas locations on **Ctrl+1..9** (Ctrl+Shift+1..9 saves the current cursor+view), zoom out to a minimap overview with **Ctrl+Z**, and view a keybinding cheat sheet with **Ctrl+H**. Target stack: **Rust** with `ratatui` (render) + `crossterm` (input/terminal) + `serde` (persistence). Single self-contained binary.
+terminal_pad is a terminal (TUI) application offering an **infinite 2D canvas** you can paste and edit text on, navigate with arrow keys (Shift jumps the view by 1/3 of a screen, Option/Alt+Left/Right jumps by a word), toggle insert/overwrite with **Ctrl+I**, and bookmark up to nine canvas locations on **Ctrl+1..9** (Ctrl+Shift+1..9 saves the current cursor+view), zoom out to a minimap overview with **Ctrl+Z**, view a keybinding cheat sheet with **Ctrl+H**, and use the mouse (click to position the cursor, scroll wheel to pan). Target stack: **Rust** with `ratatui` (render) + `crossterm` (input/terminal) + `serde` (persistence). Single self-contained binary.
 
 The live build state, milestones, and open questions live in @project-plan.md — read it first.
 

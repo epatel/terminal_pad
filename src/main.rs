@@ -25,8 +25,9 @@ use std::path::PathBuf;
 
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+        MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
     execute,
@@ -80,7 +81,12 @@ fn main() -> io::Result<()> {
 fn setup_terminal() -> io::Result<Tui> {
     let mut stdout = io::stdout();
     enable_raw_mode()?;
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    )?;
     if supports_keyboard_enhancement().unwrap_or(false) {
         execute!(
             stdout,
@@ -95,7 +101,12 @@ fn setup_terminal() -> io::Result<Tui> {
 fn restore_terminal() -> io::Result<()> {
     let mut stdout = io::stdout();
     let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-    let _ = execute!(stdout, DisableBracketedPaste, LeaveAlternateScreen);
+    let _ = execute!(
+        stdout,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+        LeaveAlternateScreen
+    );
     let _ = disable_raw_mode();
     Ok(())
 }
@@ -122,6 +133,7 @@ fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
                 }
                 handle_key(app, &key);
             }
+            Event::Mouse(m) => handle_mouse(app, &m),
             Event::Paste(text) => editing::paste(app, &text),
             Event::Resize(w, h) => {
                 // Re-sync the viewport size and keep the cursor on screen.
@@ -133,6 +145,30 @@ fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Rows the scroll wheel pans per notch.
+const WHEEL_STEP: i64 = 3;
+
+/// Route a mouse event. Active only in the normal editor (the help and overview
+/// overlays are read-only). Left-click positions the cursor at the canvas cell
+/// under the pointer; the scroll wheel pans the view vertically.
+fn handle_mouse(app: &mut App, m: &MouseEvent) {
+    if app.help || app.zoom == ZoomMode::Overview {
+        return;
+    }
+    match m.kind {
+        // The canvas area starts at the frame's top-left; the status line is the
+        // bottom row. A click on the status row (row >= canvas height) is ignored.
+        MouseEventKind::Down(MouseButton::Left)
+            if m.row < app.viewport.height && m.column < app.viewport.width =>
+        {
+            app.click_to(m.column, m.row)
+        }
+        MouseEventKind::ScrollDown => app.scroll_rows(WHEEL_STEP),
+        MouseEventKind::ScrollUp => app.scroll_rows(-WHEEL_STEP),
+        _ => {}
+    }
 }
 
 fn should_quit(key: &KeyEvent) -> bool {

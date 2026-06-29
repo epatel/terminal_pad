@@ -10,6 +10,8 @@ const BINDINGS: &[(&str, &str)] = &[
     ("Arrows", "move cursor"),
     ("Opt+Left/Right", "jump word back / forward"),
     ("Shift+Arrows", "pan view by 1/3 screen"),
+    ("Mouse click", "position cursor"),
+    ("Scroll wheel", "pan view up / down"),
     ("", ""),
     ("Ctrl+I", "toggle Insert / Overwrite"),
     ("Backspace / Delete", "delete a cell"),
