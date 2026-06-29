@@ -9,6 +9,7 @@ use crate::canvas::{Canvas, Coord};
 use crate::editing::EditMode;
 use crate::locations::{Location, SLOT_COUNT};
 use crate::overview::ZoomMode;
+use crate::selection::{self, Selection};
 use crate::viewport::Viewport;
 
 pub struct App {
@@ -31,6 +32,12 @@ pub struct App {
     pub zoom: ZoomMode,
     /// Whether the Ctrl+H keybinding cheat-sheet overlay is showing.
     pub help: bool,
+    /// Current rectangular selection (left-click-drag), if any.
+    pub selection: Option<Selection>,
+    /// Whether a selection drag is in progress (between mouse-down and mouse-up).
+    pub dragging: bool,
+    /// Internal copy buffer: the last copied block as rows of chars (Ctrl+C → Ctrl+V).
+    pub clip: Option<Vec<Vec<char>>>,
 }
 
 impl App {
@@ -46,6 +53,9 @@ impl App {
             status: String::new(),
             zoom: ZoomMode::Normal,
             help: false,
+            selection: None,
+            dragging: false,
+            clip: None,
         }
     }
 
@@ -90,6 +100,87 @@ impl App {
     /// cursor — the content scrolls under it, like a terminal's own scrollback.
     pub fn scroll_rows(&mut self, d: Coord) {
         self.viewport.origin.1 += d;
+    }
+
+    /// Begin a selection drag: position the cursor at the click cell and start a
+    /// zero-size selection anchored there.
+    pub fn begin_drag(&mut self, sx: u16, sy: u16) {
+        self.click_to(sx, sy);
+        self.selection = Some(Selection::new(self.cursor));
+        self.dragging = true;
+    }
+
+    /// Extend the active drag's far corner to the cell at `(sx, sy)`, carrying the
+    /// cursor with it. No-op when no drag is in progress.
+    pub fn update_drag(&mut self, sx: u16, sy: u16) {
+        if !self.dragging {
+            return;
+        }
+        let p = self.viewport.canvas_at(sx, sy);
+        self.cursor = p;
+        self.anchor_x = p.0;
+        if let Some(sel) = &mut self.selection {
+            sel.head = p;
+        }
+    }
+
+    /// End the drag. A selection that never grew past one cell was really a click,
+    /// so it's dropped (leaving just the positioned cursor).
+    pub fn end_drag(&mut self) {
+        self.dragging = false;
+        if matches!(self.selection, Some(sel) if sel.is_point()) {
+            self.selection = None;
+        }
+    }
+
+    /// Copy the selection into the internal clip buffer and return its text form
+    /// for the system clipboard (caller does the actual OS write). `None` when
+    /// there's no selection.
+    pub fn copy_selection(&mut self) -> Option<String> {
+        let sel = self.selection?;
+        let block = selection::extract(&self.canvas, &sel);
+        let text = selection::to_text(&block);
+        self.clip = Some(block);
+        self.status = format!("copied {}x{} block", sel.width(), sel.height());
+        Some(text)
+    }
+
+    /// Erase the selected rectangle and drop the selection. No-op when nothing is
+    /// selected.
+    pub fn delete_selection(&mut self) {
+        if let Some(sel) = self.selection {
+            selection::clear(&mut self.canvas, &sel);
+            self.status = format!("cleared {}x{} block", sel.width(), sel.height());
+            self.selection = None;
+        }
+    }
+
+    /// Paste the internal clip buffer as a block anchored at the cursor: a blank
+    /// source cell erases the destination, any other char overwrites it (so the
+    /// rectangle lands cleanly). The cursor ends at the block's end, like paste.
+    pub fn paste_clip(&mut self) {
+        let Some(block) = self.clip.clone() else {
+            return;
+        };
+        let (cx, cy) = self.cursor;
+        let mut last_w = 0;
+        for (i, rowcells) in block.iter().enumerate() {
+            let y = cy + i as Coord;
+            for (j, &ch) in rowcells.iter().enumerate() {
+                let x = cx + j as Coord;
+                if ch == ' ' {
+                    self.canvas.clear(x, y);
+                } else {
+                    self.canvas.set(x, y, ch);
+                }
+            }
+            last_w = rowcells.len() as Coord;
+        }
+        if !block.is_empty() {
+            self.cursor = (cx + last_w, cy + block.len() as Coord - 1);
+        }
+        self.selection = None;
+        self.viewport.scroll_to_show(self.cursor);
     }
 
     /// Pan the view by whole screenfuls (overview arrows), carrying the cursor the
@@ -161,6 +252,67 @@ mod tests {
         assert_eq!(app.cursor, (4, 4)); // cursor stays put
         app.scroll_rows(-3);
         assert_eq!(app.viewport.origin, (0, 0));
+    }
+
+    #[test]
+    fn drag_makes_a_rectangle_then_click_clears_it() {
+        let mut app = sized_app(80, 24);
+        app.begin_drag(2, 1); // anchor at canvas (2,1)
+        app.update_drag(5, 3); // head at (5,3)
+        let sel = app.selection.unwrap();
+        assert_eq!(sel.bounds(), (2, 1, 5, 3));
+        assert_eq!(app.cursor, (5, 3)); // cursor follows the drag head
+        app.end_drag();
+        assert!(app.selection.is_some()); // a real rectangle survives
+
+        // A click (down then up, no drag) leaves no selection.
+        app.begin_drag(7, 7);
+        app.end_drag();
+        assert!(app.selection.is_none());
+        assert_eq!(app.cursor, (7, 7));
+    }
+
+    #[test]
+    fn copy_fills_clip_and_returns_text() {
+        let mut app = sized_app(80, 24);
+        app.canvas.set(0, 0, 'h');
+        app.canvas.set(1, 0, 'i');
+        app.selection = Some(Selection {
+            anchor: (0, 0),
+            head: (1, 0),
+        });
+        let text = app.copy_selection();
+        assert_eq!(text.as_deref(), Some("hi"));
+        assert_eq!(app.clip, Some(vec![vec!['h', 'i']]));
+    }
+
+    #[test]
+    fn delete_selection_clears_block_and_drops_selection() {
+        let mut app = sized_app(80, 24);
+        app.canvas.set(0, 0, 'x');
+        app.canvas.set(1, 0, 'y');
+        app.selection = Some(Selection {
+            anchor: (0, 0),
+            head: (1, 0),
+        });
+        app.delete_selection();
+        assert_eq!(app.canvas.get(0, 0), None);
+        assert_eq!(app.canvas.get(1, 0), None);
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn paste_clip_writes_block_and_erases_blanks() {
+        let mut app = sized_app(80, 24);
+        app.clip = Some(vec![vec!['a', 'b'], vec![' ', 'c']]); // blank at lower-left
+        app.canvas.set(3, 6, 'Z'); // will be under the blank source cell
+        app.cursor = (3, 5);
+        app.paste_clip();
+        assert_eq!(app.canvas.get(3, 5), Some('a'));
+        assert_eq!(app.canvas.get(4, 5), Some('b'));
+        assert_eq!(app.canvas.get(3, 6), None); // blank source erased the 'Z'
+        assert_eq!(app.canvas.get(4, 6), Some('c'));
+        assert_eq!(app.cursor, (5, 6)); // end of the block
     }
 
     #[test]

@@ -12,12 +12,14 @@
 
 mod app;
 mod canvas;
+mod clipboard;
 mod editing;
 mod help;
 mod locations;
 mod overview;
 mod persistence;
 mod render;
+mod selection;
 mod viewport;
 
 use std::io::{self, Stdout};
@@ -128,10 +130,14 @@ fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
         terminal.draw(|frame| render::draw(frame, app))?;
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                if should_quit(&key) {
+                // Esc clears an active selection before it falls through to quit.
+                if key.code == KeyCode::Esc && app.selection.is_some() {
+                    app.selection = None;
+                } else if should_quit(&key) {
                     break;
+                } else {
+                    handle_key(app, &key);
                 }
-                handle_key(app, &key);
             }
             Event::Mouse(m) => handle_mouse(app, &m),
             Event::Paste(text) => editing::paste(app, &text),
@@ -151,20 +157,26 @@ fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
 const WHEEL_STEP: i64 = 3;
 
 /// Route a mouse event. Active only in the normal editor (the help and overview
-/// overlays are read-only). Left-click positions the cursor at the canvas cell
-/// under the pointer; the scroll wheel pans the view vertically.
+/// overlays are read-only). Left-click-drag paints a rectangular selection (a
+/// bare click positions the cursor); the scroll wheel pans the view vertically.
 fn handle_mouse(app: &mut App, m: &MouseEvent) {
     if app.help || app.zoom == ZoomMode::Overview {
         return;
     }
+    let (w, h) = (app.viewport.width, app.viewport.height);
+    if w == 0 || h == 0 {
+        return;
+    }
+    // Clamp to the canvas drawing area: a drag may run past the edges or onto the
+    // status row; the press itself must start inside the canvas.
+    let sx = m.column.min(w - 1);
+    let sy = m.row.min(h - 1);
     match m.kind {
-        // The canvas area starts at the frame's top-left; the status line is the
-        // bottom row. A click on the status row (row >= canvas height) is ignored.
-        MouseEventKind::Down(MouseButton::Left)
-            if m.row < app.viewport.height && m.column < app.viewport.width =>
-        {
-            app.click_to(m.column, m.row)
+        MouseEventKind::Down(MouseButton::Left) if m.row < h && m.column < w => {
+            app.begin_drag(sx, sy)
         }
+        MouseEventKind::Drag(MouseButton::Left) => app.update_drag(sx, sy),
+        MouseEventKind::Up(MouseButton::Left) => app.end_drag(),
         MouseEventKind::ScrollDown => app.scroll_rows(WHEEL_STEP),
         MouseEventKind::ScrollUp => app.scroll_rows(-WHEEL_STEP),
         _ => {}
@@ -227,6 +239,27 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         }
         return;
     }
+
+    // Selection actions. Ctrl+C copies (and keeps the selection); Ctrl+V pastes
+    // the internal block; Delete/Backspace on a selection clears the block. Any
+    // other key dismisses a lingering selection so the highlight doesn't stick.
+    if ctrl && key.code == KeyCode::Char('c') {
+        if let Some(text) = app.copy_selection()
+            && let Err(e) = clipboard::set_system(&text)
+        {
+            app.status = format!("{} (clipboard: {e})", app.status);
+        }
+        return;
+    }
+    if ctrl && key.code == KeyCode::Char('v') {
+        app.paste_clip();
+        return;
+    }
+    if app.selection.is_some() && matches!(key.code, KeyCode::Delete | KeyCode::Backspace) {
+        app.delete_selection();
+        return;
+    }
+    app.selection = None;
 
     match key.code {
         KeyCode::Left => {

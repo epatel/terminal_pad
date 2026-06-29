@@ -8,6 +8,9 @@ repository = "https://github.com/epatel/terminal_pad"
 readme = "README.md"
 
 [dependencies]
+# Text-only system clipboard; default features pull image-decoding crates we
+# don't need (selections are plain characters).
+arboard = { version = "3.6.1", default-features = false }
 crossterm = "0.29.0"
 ratatui = "0.30.1"
 serde = { version = "1.0.228", features = ["derive"] }

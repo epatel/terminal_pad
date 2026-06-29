@@ -7,8 +7,8 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position},
-    style::Stylize,
-    text::Line,
+    style::{Style, Stylize},
+    text::{Line, Span},
     widgets::Paragraph,
 };
 
@@ -16,6 +16,7 @@ use crate::app::App;
 use crate::canvas::Canvas;
 use crate::help;
 use crate::overview::{self, ZoomMode};
+use crate::selection::Selection;
 use crate::viewport::Viewport;
 
 /// Rows reserved at the bottom for the status line.
@@ -56,8 +57,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return; // no text cursor in the overview
     }
 
-    let rows = window_rows(&app.canvas, &app.viewport);
-    frame.render_widget(Paragraph::new(rows.join("\n")), canvas_area);
+    let lines = canvas_lines(&app.canvas, &app.viewport, app.selection.as_ref());
+    frame.render_widget(Paragraph::new(lines), canvas_area);
 
     let marks: String = app
         .locations
@@ -65,13 +66,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .enumerate()
         .filter_map(|(i, slot)| slot.map(|_| char::from_digit(i as u32 + 1, 10).unwrap()))
         .collect();
+    let sel = match app.selection {
+        Some(s) => format!("   sel {}x{}", s.width(), s.height()),
+        None => String::new(),
+    };
     let status = format!(
-        " {}   cursor ({}, {})   cells {}   marks [{}]   {}   ·   ^H help · ^S save · ^1-9 jump / ^⇧1-9 save · ^I mode · Esc/^Q quit ",
+        " {}   cursor ({}, {})   cells {}   marks [{}]{}   {}   ·   ^H help · ^C/^V copy/paste · ^S save · Esc/^Q quit ",
         app.mode.label(),
         app.cursor.0,
         app.cursor.1,
         app.canvas.len(),
         marks,
+        sel,
         app.status,
     );
     frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
@@ -97,6 +103,49 @@ pub fn window_rows(canvas: &Canvas, vp: &Viewport) -> Vec<String> {
         .collect()
 }
 
+/// Build the visible window as styled `Line`s, reversing the cells inside the
+/// selection rectangle. Without a selection each row is a single plain span.
+fn canvas_lines(canvas: &Canvas, vp: &Viewport, sel: Option<&Selection>) -> Vec<Line<'static>> {
+    let rows = window_rows(canvas, vp);
+    rows.into_iter()
+        .enumerate()
+        .map(|(sy, row)| match sel {
+            Some(sel) => style_row(&row, sy as u16, vp, sel),
+            None => Line::from(row),
+        })
+        .collect()
+}
+
+/// Split one screen row into spans, reversing runs of cells that fall inside the
+/// selection. Consecutive cells of the same state are merged into one span.
+fn style_row(row: &str, sy: u16, vp: &Viewport, sel: &Selection) -> Line<'static> {
+    let (_, y) = vp.canvas_at(0, sy);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buf = String::new();
+    let mut buf_selected = false;
+    for (sx, ch) in row.chars().enumerate() {
+        let x = vp.origin.0 + sx as i64;
+        let selected = sel.contains(x, y);
+        if selected != buf_selected && !buf.is_empty() {
+            spans.push(make_span(std::mem::take(&mut buf), buf_selected));
+        }
+        buf_selected = selected;
+        buf.push(ch);
+    }
+    if !buf.is_empty() {
+        spans.push(make_span(buf, buf_selected));
+    }
+    Line::from(spans)
+}
+
+fn make_span(text: String, selected: bool) -> Span<'static> {
+    if selected {
+        Span::styled(text, Style::new().reversed())
+    } else {
+        Span::raw(text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +164,26 @@ mod tests {
             window_rows(&canvas, &vp),
             vec!["a  ".to_string(), "  b".to_string()]
         );
+    }
+
+    #[test]
+    fn selection_splits_row_into_styled_spans() {
+        let vp = Viewport {
+            origin: (0, 0),
+            width: 4,
+            height: 1,
+        };
+        let sel = Selection {
+            anchor: (1, 0),
+            head: (2, 0),
+        }; // columns 1..=2 selected
+        let line = style_row("abcd", 0, &vp, &sel);
+        // "a" plain, "bc" reversed, "d" plain.
+        assert_eq!(line.spans.len(), 3);
+        assert_eq!(line.spans[0].content, "a");
+        assert_eq!(line.spans[1].content, "bc");
+        assert_eq!(line.spans[1].style, Style::new().reversed());
+        assert_eq!(line.spans[2].content, "d");
     }
 
     #[test]
