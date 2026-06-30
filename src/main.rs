@@ -280,6 +280,14 @@ fn install_panic_hook() {
 /// Blocking event loop. M0 only draws a placeholder and quits on Esc / Ctrl-Q;
 /// later milestones route events into the feature pipeline (see architecture).
 fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
+    // The view origin restored from disk was saved without a terminal size; sync
+    // the size now and clamp so the cursor is on screen even if the terminal is
+    // smaller than at save time. A same-size reopen is a no-op (origin preserved).
+    let size = terminal.size()?;
+    app.viewport.width = size.width;
+    app.viewport.height = size.height.saturating_sub(render::STATUS_HEIGHT);
+    app.viewport.scroll_to_show(app.cursor);
+
     loop {
         terminal.draw(|frame| render::draw(frame, app))?;
         match event::read()? {

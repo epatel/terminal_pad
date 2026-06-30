@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::canvas::{Canvas, Coord};
 use crate::locations::{Location, SLOT_COUNT};
 
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct Doc {
@@ -22,6 +22,10 @@ struct Doc {
     /// Bookmark slots; expected length `SLOT_COUNT` but tolerated otherwise.
     slots: Vec<Option<Location>>,
     cursor: [Coord; 2],
+    /// Viewport origin (top-left of the view) — added in v2. Absent in v1 files,
+    /// which then load with the view anchored on the cursor.
+    #[serde(default)]
+    origin: Option<[Coord; 2]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -43,6 +47,7 @@ pub fn to_json(app: &App) -> serde_json::Result<String> {
             .collect(),
         slots: app.locations.to_vec(),
         cursor: [app.cursor.0, app.cursor.1],
+        origin: Some([app.viewport.origin.0, app.viewport.origin.1]),
     };
     serde_json::to_string_pretty(&doc)
 }
@@ -65,9 +70,13 @@ pub fn from_json(s: &str, app: &mut App) -> serde_json::Result<()> {
 
     app.cursor = (doc.cursor[0], doc.cursor[1]);
     app.anchor_x = app.cursor.0;
-    // No viewport size yet at load time; anchor the view on the cursor so it's
-    // visible on the first frame.
-    app.viewport.origin = app.cursor;
+    // Restore the saved view (v2). v1 files have no origin, so fall back to
+    // anchoring the view on the cursor. The cursor is re-clamped onto the screen
+    // once the terminal size is known (see `main::run`).
+    app.viewport.origin = match doc.origin {
+        Some([x, y]) => (x, y),
+        None => app.cursor,
+    };
     Ok(())
 }
 
@@ -114,6 +123,7 @@ mod tests {
         editing::newline(&mut app); // cursor to (0, 1)
         editing::type_char(&mut app, '!');
         app.cursor = (40, 12);
+        app.viewport.origin = (33, 8); // distinct from the cursor
         app.locations[3] = Some(Location {
             cursor: (5, 6),
             origin: (1, 2),
@@ -133,8 +143,18 @@ mod tests {
                 origin: (1, 2),
             })
         );
-        // View is anchored on the loaded cursor.
-        assert_eq!(restored.viewport.origin, (40, 12));
+        // The saved view is restored independently of the cursor (not re-anchored).
+        assert_eq!(restored.viewport.origin, (33, 8));
+    }
+
+    #[test]
+    fn v1_file_without_origin_falls_back_to_cursor() {
+        // A pre-v2 document (no `origin` field) loads with the view on the cursor.
+        let v1 = r#"{"version":1,"cells":[],"slots":[],"cursor":[12,7]}"#;
+        let mut app = App::new();
+        from_json(v1, &mut app).unwrap();
+        assert_eq!(app.cursor, (12, 7));
+        assert_eq!(app.viewport.origin, (12, 7));
     }
 
     #[test]
@@ -164,12 +184,14 @@ mod tests {
         let mut app = App::new();
         editing::type_char(&mut app, 'Z');
         app.cursor = (7, 3);
+        app.viewport.origin = (4, 1);
         save(&path, &app).unwrap();
 
         let mut loaded = App::new();
         assert!(load(&path, &mut loaded).unwrap());
         assert_eq!(loaded.canvas.cells(), app.canvas.cells());
         assert_eq!(loaded.cursor, (7, 3));
+        assert_eq!(loaded.viewport.origin, (4, 1));
 
         fs::remove_file(&path).unwrap();
     }

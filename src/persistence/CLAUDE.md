@@ -13,23 +13,28 @@ Resolved in `main` from the CLI (hand-rolled `parse`, no clap) and stored on `Ap
 - The canvas cells (flat list of `{x, y, c}`, sorted by `(y, x)`).
 - The nine bookmark slots (`Option<Location>` each — cursor + viewport origin).
 - The cursor position.
+- The **viewport origin** (the view's top-left) — added in v2, so reopening
+  restores the exact scroll position, not just the cursor. Loaded back in
+  `main::run`, which syncs the terminal size and `scroll_to_show`s to clamp the
+  cursor on screen if the terminal shrank since the save (mirrors `locations::jump`).
 
 ## Format
 serde + serde_json, a versioned `Doc`:
 ```json
 {
-  "version": 1,
+  "version": 2,
   "cells": [ { "x": 0, "y": 0, "c": "H" } ],
   "slots": [ null, { "cursor": [40,12], "origin": [38,10] }, null, ... ],
-  "cursor": [0, 0]
+  "cursor": [0, 0],
+  "origin": [0, 0]
 }
 ```
-`version` lets the format evolve. `char` serializes as a one-character JSON string.
+`version` lets the format evolve. `char` serializes as a one-character JSON string. `origin` is optional (`#[serde(default)]`): **v1** files omit it and load with the view anchored on the cursor; **v2** adds it so the exact scroll position round-trips.
 
 ## When
 - **Load** — at startup in `main`, before the TUI. Missing file → fresh canvas (`Ok(false)`); a malformed/unreadable file **aborts the program** with a message rather than entering the app, so the auto-save-on-exit can't clobber it.
 - **Save** — `Ctrl+S` (explicit, reports result in the status line) and automatically on clean exit (after the terminal is restored).
-- On load, the viewport origin is anchored on the loaded cursor (no viewport size is known yet) so the cursor is visible on the first frame.
+- On load, the saved viewport origin is restored (v1: falls back to the cursor). The terminal size isn't known yet, so `main::run` syncs it and `scroll_to_show`s once before the first frame to keep the cursor visible.
 
 ## Invariants
 - A missing file at startup is normal, not an error.
@@ -41,7 +46,7 @@ serde + serde_json, a versioned `Doc`:
 - JSON is fine for v1; a binary/RLE format is a later option if size/latency hurts.
 
 ## Ownership
-Owns the on-disk format and load/save. Reads the canvas (`cells()`), the bookmark slots, and the cursor; reconstructs them on load.
+Owns the on-disk format and load/save. Reads the canvas (`cells()`), the bookmark slots, the cursor, and the viewport origin; reconstructs them on load.
 
 ## Status
-Implemented (M8) with unit tests, including a real temp-file save→load round-trip.
+Implemented (M8); viewport origin added in v2 (M16) so reopening restores the scroll position. Unit tests cover the round-trip (incl. origin), a real temp-file save→load, and the v1-without-origin fallback.
