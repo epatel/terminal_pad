@@ -316,7 +316,11 @@ fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
 }
 
 /// Rows the scroll wheel pans per notch.
-const WHEEL_STEP: i64 = 3;
+const WHEEL_STEP: i64 = 1;
+/// Columns a horizontal scroll notch pans. Larger than `WHEEL_STEP` because a
+/// terminal cell is ~twice as tall as it is wide, so equal cell counts feel
+/// like much less horizontal travel.
+const HWHEEL_STEP: i64 = 8;
 
 /// Route a mouse event. Active only in the normal editor (the help and overview
 /// overlays are read-only). Left-click-drag paints a rectangular selection (a
@@ -341,6 +345,8 @@ fn handle_mouse(app: &mut App, m: &MouseEvent) {
         MouseEventKind::Up(MouseButton::Left) => app.end_drag(),
         MouseEventKind::ScrollDown => app.scroll_rows(WHEEL_STEP),
         MouseEventKind::ScrollUp => app.scroll_rows(-WHEEL_STEP),
+        MouseEventKind::ScrollRight => app.scroll_cols(-HWHEEL_STEP),
+        MouseEventKind::ScrollLeft => app.scroll_cols(HWHEEL_STEP),
         _ => {}
     }
 }

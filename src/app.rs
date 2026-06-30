@@ -102,6 +102,12 @@ impl App {
         self.viewport.origin.1 += d;
     }
 
+    /// Pan the view horizontally by `d` columns (horizontal scroll wheel /
+    /// trackpad swipe) without moving the cursor.
+    pub fn scroll_cols(&mut self, d: Coord) {
+        self.viewport.origin.0 += d;
+    }
+
     /// Begin a selection drag: position the cursor at the click cell and start a
     /// zero-size selection anchored there.
     pub fn begin_drag(&mut self, sx: u16, sy: u16) {
