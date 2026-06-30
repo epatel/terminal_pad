@@ -3,29 +3,38 @@
 # terminal_pad
 
 A terminal (TUI) text pad over an **infinite 2D canvas**. Paste and edit text
-anywhere, navigate with the arrow keys, bookmark spots, and zoom out to a minimap
-overview. Your canvas is saved to a plain JSON file.
+anywhere, navigate with the keyboard or mouse, select/copy/paste rectangles,
+bookmark spots, and zoom out to a minimap overview. Your canvas is saved to a
+plain JSON file.
 
 Built in Rust with [`ratatui`](https://ratatui.rs) (rendering),
-[`crossterm`](https://docs.rs/crossterm) (input/terminal), and `serde`
-(persistence). Ships as a single self-contained binary.
+[`crossterm`](https://docs.rs/crossterm) (input/terminal), `serde`
+(persistence), and [`arboard`](https://docs.rs/arboard) (system clipboard).
+Ships as a single self-contained binary.
 
 ## Features
 
 - **Infinite canvas** — write at any coordinate, in any direction; only written
   cells use memory.
 - **Navigation** — arrows move the cursor (the view follows); **Shift+arrow**
-  pans the view by ⅓ of a screen, carrying the cursor with it (reversible).
+  pans the view by ⅓ of a screen, carrying the cursor with it (reversible);
+  **Option/Alt+Left/Right** jump a word.
 - **Editing** — type to insert; **Ctrl+I** toggles Insert/Overwrite;
   Backspace/Delete/Enter.
+- **Mouse** — click to position the cursor, **drag to select a rectangle**, and
+  scroll-wheel to pan.
+- **Selection** — copy a selected block with **Ctrl+C** (to an internal buffer
+  *and* the system clipboard), paste it with **Ctrl+V**, clear it with
+  Delete/Backspace, cancel with Esc.
 - **Paste** — bracketed paste drops a block at the cursor, preserving lines
   (CR / CRLF / LF all handled).
 - **Bookmarks** — nine slots: **Ctrl+1..9** jump, **Ctrl+Shift+1..9** save the
   current cursor *and* view.
 - **Overview** — **Ctrl+Z** zooms out to a density minimap with your current view
-  drawn as a box; arrows pan a screenful at a time for quick navigation.
+  drawn as a box; arrows pan a screenful (Shift+arrow ⅓) for quick navigation.
+- **Help** — **Ctrl+H** shows a keybinding cheat sheet; any key dismisses it.
 - **Persistence** — **Ctrl+S** saves; also auto-saves on clean exit. Atomic
-  writes (temp file + rename).
+  writes (temp file + rename). Named central pads via `--name` (see Usage).
 
 ## Install
 

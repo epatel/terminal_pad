@@ -36,8 +36,12 @@ The code was sound; documentation had drifted after the session's new features
 4. **`render/CLAUDE.md`** — did not mention the help/overview branches or the
    selection-highlight rendering. Now documents `canvas_lines`/`style_row` and
    the real status-line contents.
+5. **`README.md`** — Usage, keybindings, terminal note, and the architecture
+   diagram were current, but the intro + **Features** list still omitted mouse,
+   rectangle selection/clipboard, word jump, and the help overlay (and the
+   `arboard` dependency). Brought current in a follow-up.
 
-Committed as `730614e` (docs-only). The historical F-key references in
+Committed as `730614e` (src/cards docs); README follow-up separately. The historical F-key references in
 `project-plan.md` decisions, `locations/CLAUDE.md`, and
 `decision-language-rust.md` were left as-is — they correctly record "changed
 from the original F1–F10 idea," not staleness.
