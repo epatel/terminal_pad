@@ -1,9 +1,13 @@
 # persistence — load & save
 
-Loading and saving the canvas, bookmarks, and cursor as JSON. Triggered when working on the file format, save/load, the `.tpad` file, or the CLI path arg.
+Loading and saving the canvas, bookmarks, and cursor as JSON. Triggered when working on the file format, save/load, the `.tpad` file, or the CLI path args (`--name` / `--clear` / positional path, parsed in `main`).
 
 ## File path
-A single file given as the first CLI argument, defaulting to `./canvas.tpad` (resolved in `main`). The path is stored on `App::path`.
+Resolved in `main` from the CLI (hand-rolled `parse`, no clap) and stored on `App::path`:
+- **`--name <name>`** → `($XDG_DATA_HOME` or `~/.local/share)`/terminal_pad/<name>.tpad` — a central pad reachable from any directory. `<name>` must be a bare component (no separators / `..`). `main` `create_dir_all`s the parent before load/save.
+- **positional `PATH`** (back-compat) → that literal file; default `./canvas.tpad`. Mutually exclusive with `--name`.
+- **`--clear`** → start from an empty canvas (skips load, even for a malformed file); the cleared state is persisted by the normal save-on-exit / Ctrl+S.
+- **`-h`/`--help`** → print usage and exit.
 
 ## What is persisted
 - The canvas cells (flat list of `{x, y, c}`, sorted by `(y, x)`).

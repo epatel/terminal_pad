@@ -55,18 +55,27 @@ cargo build --release   # or: make release
 ## Usage
 
 ```sh
-terminal_pad [FILE]      # defaults to ./canvas.tpad
+terminal_pad [FILE]          # a pad file; defaults to ./canvas.tpad
+terminal_pad --name notes    # a central pad, reachable from any directory:
+                             #   ($XDG_DATA_HOME or ~/.local/share)/terminal_pad/notes.tpad
+terminal_pad --name notes --clear   # open that pad starting empty
+terminal_pad --help          # full usage
 ```
+
+`--name` and a positional `FILE` are mutually exclusive. `--clear` starts from
+an empty canvas; the cleared state is written on exit / Ctrl+S.
 
 During development:
 
 ```sh
 make run                 # cargo run (uses ./canvas.tpad)
 cargo run -- notes.tpad  # open a specific file
+cargo run -- --name scratch   # a named central pad
 ```
 
 A missing file starts a fresh canvas. A malformed file aborts with an error
-(it is never overwritten).
+(it is never overwritten) — unless `--clear` is given, which ignores existing
+contents.
 
 ## Keybindings
 
@@ -74,14 +83,22 @@ A missing file starts a fresh canvas. A malformed file aborts with an error
 |-----|--------|
 | Arrows | Move cursor (view follows) |
 | Shift+Arrows | Pan view ⅓ screen (cursor moves too) |
+| Option/Alt+Left/Right | Jump a word back / forward |
 | Ctrl+I | Toggle Insert / Overwrite |
 | Backspace / Delete | Delete before / under cursor |
 | Enter | New line (returns to the line's start column) |
 | Ctrl+1 … Ctrl+9 | Jump to bookmark 1–9 |
 | Ctrl+Shift+1 … Ctrl+Shift+9 | Save bookmark 1–9 |
-| Ctrl+Z | Toggle zoom-out overview (arrows pan there) |
+| Ctrl+Z | Toggle zoom-out overview (Shift+arrows pan ⅓ there) |
+| Ctrl+H | Toggle the keybinding cheat sheet |
 | Ctrl+S | Save |
 | Esc / Ctrl+Q | Quit (auto-saves) |
+| Mouse click | Position the cursor |
+| Mouse drag | Select a rectangle |
+| Scroll wheel | Pan the view up / down |
+| Ctrl+C / Ctrl+V | Copy selection (+ system clipboard) / paste block |
+| Delete / Backspace | Clear the selection (when one is active) |
+| Esc | Cancel the selection |
 
 ### Terminal note
 
@@ -90,7 +107,10 @@ A missing file starts a fresh canvas. A malformed file aborts with an error
 report their modifiers, which the app enables when supported. Use
 **kitty / WezTerm / Ghostty / recent iTerm2** for these to work reliably; in
 plain macOS Terminal.app, `Ctrl+I` registers as Tab and `Ctrl+digit` may not be
-distinguishable. `Ctrl+Z`, `Ctrl+S`, arrows, and editing work everywhere.
+distinguishable. `Ctrl+Z`, `Ctrl+S`, arrows, the mouse, and editing work
+everywhere. `Option+Arrow` word jump needs the same protocol (some terminals
+otherwise send `ESC b`/`ESC f`). Capturing the mouse takes over the terminal's
+own click-to-select/copy — hold **Shift** (or **Option**) for native selection.
 
 ## File format
 
@@ -120,7 +140,10 @@ flowchart LR
   app --> editing["editing — typing, modes, paste"]
   app --> locations["locations — bookmarks"]
   app --> overview["overview — minimap"]
+  app --> selection["selection — rectangle + clip"]
   app --> persistence["persistence — JSON load/save"]
+  app --> help["help — keybinding overlay"]
+  selection --> clipboard["clipboard — system clipboard"]
   render["render — draw frame"] --> app
 ```
 

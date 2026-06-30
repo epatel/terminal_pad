@@ -22,8 +22,9 @@ mod render;
 mod selection;
 mod viewport;
 
+use std::fs;
 use std::io::{self, Stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crossterm::{
     event::{
@@ -45,23 +46,79 @@ use overview::ZoomMode;
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
+const USAGE: &str = "\
+terminal_pad — infinite-canvas text pad
+
+Usage:
+  terminal_pad [PATH]
+  terminal_pad --name <name> [--clear]
+
+Options:
+  --name <name>   Open the named pad under the data dir
+                  ($XDG_DATA_HOME or ~/.local/share)/terminal_pad/<name>.tpad,
+                  reachable from any directory.
+  --clear         Start the pad empty; the cleared state is written on
+                  exit / Ctrl+S.
+  -h, --help      Show this help.
+
+Without --name, PATH is the pad file (default ./canvas.tpad).";
+
 fn main() -> io::Result<()> {
-    let path = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("canvas.tpad"));
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let parsed = match parse(&raw) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("terminal_pad: {e}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
+    if parsed.help {
+        println!("{USAGE}");
+        return Ok(());
+    }
+
+    let path = match &parsed.name {
+        Some(name) => match data_dir().and_then(|base| pad_path_in(&base, name)) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("terminal_pad: {e}");
+                std::process::exit(2);
+            }
+        },
+        None => parsed
+            .positional
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("canvas.tpad")),
+    };
+
+    // The central pads dir (and any nested path) may not exist yet; the atomic
+    // save writes a sibling temp file, so the directory must be present first.
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        eprintln!("terminal_pad: cannot create {}: {e}", parent.display());
+        std::process::exit(1);
+    }
 
     let mut app = App::new();
     app.path = path.clone();
 
-    // Load before entering the TUI; a malformed file aborts so we never clobber
-    // it on the save-at-exit below.
-    match persistence::load(&path, &mut app) {
-        Ok(true) => app.status = format!("loaded {}", path.display()),
-        Ok(false) => app.status = format!("new file {}", path.display()),
-        Err(e) => {
-            eprintln!("terminal_pad: cannot read {}: {e}", path.display());
-            std::process::exit(1);
+    if parsed.clear {
+        // Start from an empty canvas; the cleared state is persisted by the
+        // save-on-exit (or Ctrl+S). Existing contents — even a malformed file —
+        // are simply not loaded.
+        app.status = format!("cleared {}", path.display());
+    } else {
+        // Load before entering the TUI; a malformed file aborts so we never
+        // clobber it on the save-at-exit below.
+        match persistence::load(&path, &mut app) {
+            Ok(true) => app.status = format!("loaded {}", path.display()),
+            Ok(false) => app.status = format!("new file {}", path.display()),
+            Err(e) => {
+                eprintln!("terminal_pad: cannot read {}: {e}", path.display());
+                std::process::exit(1);
+            }
         }
     }
 
@@ -75,6 +132,87 @@ fn main() -> io::Result<()> {
         eprintln!("terminal_pad: cannot save {}: {e}", app.path.display());
     }
     result
+}
+
+/// Parsed command line. `name` selects a central pad, `positional` is a literal
+/// pad path; they are mutually exclusive.
+struct Parsed {
+    name: Option<String>,
+    positional: Option<PathBuf>,
+    clear: bool,
+    help: bool,
+}
+
+/// Parse the argument list (everything after the program name). Hand-rolled —
+/// the surface is tiny and a clap dependency isn't worth it.
+fn parse(args: &[String]) -> Result<Parsed, String> {
+    let mut name = None;
+    let mut positional: Option<PathBuf> = None;
+    let mut clear = false;
+    let mut help = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        match a.as_str() {
+            "--name" => {
+                i += 1;
+                let v = args.get(i).ok_or("--name requires a value")?;
+                if name.is_some() {
+                    return Err("--name given more than once".into());
+                }
+                name = Some(v.clone());
+            }
+            "--clear" => clear = true,
+            "-h" | "--help" => help = true,
+            // Any other dash-prefixed token (but not a lone "-") is an unknown flag.
+            _ if a.starts_with('-') && a != "-" => {
+                return Err(format!("unknown option: {a}"));
+            }
+            _ => {
+                if positional.is_some() {
+                    return Err("more than one path argument given".into());
+                }
+                positional = Some(PathBuf::from(a));
+            }
+        }
+        i += 1;
+    }
+
+    if name.is_some() && positional.is_some() {
+        return Err("--name and a path argument cannot be combined".into());
+    }
+    Ok(Parsed {
+        name,
+        positional,
+        clear,
+        help,
+    })
+}
+
+/// Resolve a `--name` value to `<base>/terminal_pad/<name>.tpad`, rejecting names
+/// that aren't a single bare path component (so a pad can't escape the dir).
+fn pad_path_in(base: &Path, name: &str) -> Result<PathBuf, String> {
+    if name.is_empty() {
+        return Err("--name must not be empty".into());
+    }
+    if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(format!("--name must be a bare name, not a path: {name:?}"));
+    }
+    Ok(base.join("terminal_pad").join(format!("{name}.tpad")))
+}
+
+/// The user data directory: `$XDG_DATA_HOME` if set, else `~/.local/share`.
+fn data_dir() -> Result<PathBuf, String> {
+    if let Some(x) = std::env::var_os("XDG_DATA_HOME")
+        && !x.is_empty()
+    {
+        return Ok(PathBuf::from(x));
+    }
+    match std::env::var_os("HOME") {
+        Some(h) if !h.is_empty() => Ok(PathBuf::from(h).join(".local").join("share")),
+        _ => Err("cannot locate a data directory (set HOME or XDG_DATA_HOME)".into()),
+    }
 }
 
 /// Enter raw mode + alternate screen, enable bracketed paste, and (when the
@@ -321,5 +459,62 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
             editing::type_char(app, c)
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_name_and_clear() {
+        let p = parse(&args(&["--name", "notes", "--clear"])).unwrap();
+        assert_eq!(p.name.as_deref(), Some("notes"));
+        assert!(p.clear);
+        assert!(p.positional.is_none());
+    }
+
+    #[test]
+    fn parse_positional_path_default_back_compat() {
+        let p = parse(&args(&["/tmp/foo.tpad"])).unwrap();
+        assert_eq!(p.positional, Some(PathBuf::from("/tmp/foo.tpad")));
+        assert!(p.name.is_none() && !p.clear);
+    }
+
+    #[test]
+    fn parse_help_flag() {
+        assert!(parse(&args(&["--help"])).unwrap().help);
+        assert!(parse(&args(&["-h"])).unwrap().help);
+    }
+
+    #[test]
+    fn parse_rejects_name_combined_with_path() {
+        assert!(parse(&args(&["--name", "a", "b.tpad"])).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_unknown_flag_and_bad_arity() {
+        assert!(parse(&args(&["--wat"])).is_err());
+        assert!(parse(&args(&["--name"])).is_err());
+        assert!(parse(&args(&["a.tpad", "b.tpad"])).is_err());
+    }
+
+    #[test]
+    fn pad_path_joins_under_data_dir() {
+        assert_eq!(
+            pad_path_in(Path::new("/data"), "notes").unwrap(),
+            PathBuf::from("/data/terminal_pad/notes.tpad")
+        );
+    }
+
+    #[test]
+    fn pad_path_rejects_non_bare_names() {
+        assert!(pad_path_in(Path::new("/data"), "").is_err());
+        assert!(pad_path_in(Path::new("/data"), "a/b").is_err());
+        assert!(pad_path_in(Path::new("/data"), "..").is_err());
     }
 }
