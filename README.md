@@ -69,6 +69,7 @@ terminal_pad --name notes    # a central pad, reachable from any directory:
                              #   ($XDG_DATA_HOME or ~/.local/share)/terminal_pad/notes.tpad
 terminal_pad --name notes --clear   # open that pad starting empty
 terminal_pad --help          # full usage
+terminal_pad --version       # print the version
 ```
 
 `--name` and a positional `FILE` are mutually exclusive. `--clear` starts from

@@ -65,6 +65,7 @@ Options:
   --clear         Start the pad empty; the cleared state is written on
                   exit / Ctrl+S.
   -h, --help      Show this help.
+  -V, --version   Show the version.
 
 Without --name, PATH is the pad file (default ./canvas.tpad).";
 
@@ -79,6 +80,10 @@ fn main() -> io::Result<()> {
     };
     if parsed.help {
         println!("{USAGE}");
+        return Ok(());
+    }
+    if parsed.version {
+        println!("terminal_pad {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
@@ -146,6 +151,7 @@ struct Parsed {
     positional: Option<PathBuf>,
     clear: bool,
     help: bool,
+    version: bool,
 }
 
 /// Parse the argument list (everything after the program name). Hand-rolled —
@@ -155,6 +161,7 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
     let mut positional: Option<PathBuf> = None;
     let mut clear = false;
     let mut help = false;
+    let mut version = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -170,6 +177,7 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
             }
             "--clear" => clear = true,
             "-h" | "--help" => help = true,
+            "-V" | "--version" => version = true,
             // Any other dash-prefixed token (but not a lone "-") is an unknown flag.
             _ if a.starts_with('-') && a != "-" => {
                 return Err(format!("unknown option: {a}"));
@@ -192,6 +200,7 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
         positional,
         clear,
         help,
+        version,
     })
 }
 
@@ -495,6 +504,12 @@ mod tests {
     fn parse_help_flag() {
         assert!(parse(&args(&["--help"])).unwrap().help);
         assert!(parse(&args(&["-h"])).unwrap().help);
+    }
+
+    #[test]
+    fn parse_version_flag() {
+        assert!(parse(&args(&["--version"])).unwrap().version);
+        assert!(parse(&args(&["-V"])).unwrap().version);
     }
 
     #[test]
