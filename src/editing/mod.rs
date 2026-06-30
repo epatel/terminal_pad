@@ -57,11 +57,42 @@ pub fn delete(app: &mut App) {
     app.viewport.scroll_to_show(app.cursor);
 }
 
-/// Move to the start column of the next row. The "start column" is the line
-/// anchor — the column where text entry on the current line began (set whenever
-/// the cursor is repositioned by navigation).
+/// Split the current "line" at the cursor (Enter). The trailing run — words
+/// joined by single spaces, up to the first ≥2-blank gap — moves down one row,
+/// left-aligned to the line's start column, with the block(s) below pushed down
+/// to make room (`layout::make_room`). When the cursor is at/after the line's end
+/// the cursor just drops to the line's start on the next row; on a blank row it
+/// falls back to the saved anchor column. See `src/layout/`.
 pub fn newline(app: &mut App) {
-    app.cursor = (app.anchor_x, app.cursor.1 + 1);
+    let (cx, cy) = app.cursor;
+    match crate::layout::line_bounds(&app.canvas, cx, cy) {
+        Some((s, e)) if cx <= e => {
+            // Capture the trailing run before mutating (make_room only touches
+            // cy+1 and below, so the source row cy is safe to read here).
+            let run: Vec<Option<char>> = (cx..=e).map(|x| app.canvas.get(x, cy)).collect();
+            let band = (s, s + (e - cx));
+            crate::layout::make_room(&mut app.canvas, band, cy + 1);
+            for x in cx..=e {
+                app.canvas.clear(x, cy);
+            }
+            for (i, ch) in run.into_iter().enumerate() {
+                let x = s + i as Coord;
+                match ch {
+                    Some(c) => app.canvas.set(x, cy + 1, c),
+                    None => app.canvas.clear(x, cy + 1),
+                }
+            }
+            app.cursor = (s, cy + 1);
+            app.anchor_x = s;
+        }
+        Some((s, _)) => {
+            app.cursor = (s, cy + 1);
+            app.anchor_x = s;
+        }
+        None => {
+            app.cursor = (app.anchor_x, cy + 1);
+        }
+    }
     app.viewport.scroll_to_show(app.cursor);
 }
 
@@ -257,11 +288,62 @@ mod tests {
 
     #[test]
     fn newline_returns_to_line_anchor() {
+        // Cursor at the line's end+1: nothing to split, drops to the start column.
         let mut app = App::new();
         app.move_cursor(5, 2); // navigate -> sets anchor_x = 5
-        type_str(&mut app, "hi"); // cursor (7, 2), anchor still 5
+        type_str(&mut app, "hi"); // cursor (7, 2)
         newline(&mut app);
         assert_eq!(app.cursor, (5, 3));
+    }
+
+    #[test]
+    fn newline_splits_line_and_moves_tail_to_start() {
+        let mut app = App::new();
+        app.move_cursor(2, 0); // anchor 2
+        type_str(&mut app, "the cat sat"); // cols 2..=12
+        app.cursor = (6, 0); // on 'c' of "cat"
+        newline(&mut app);
+        assert_eq!(row(&app, 0), "the "); // cols 2..=5 stay (incl. trailing space)
+        assert_eq!(app.canvas.get(6, 0), None); // tail cleared
+        assert_eq!(row(&app, 1), "cat sat"); // moved to the line start (col 2)
+        assert_eq!(app.cursor, (2, 1));
+    }
+
+    #[test]
+    fn newline_at_line_start_moves_whole_line_down() {
+        let mut app = App::new();
+        app.move_cursor(0, 0);
+        type_str(&mut app, "hello");
+        app.cursor = (0, 0);
+        newline(&mut app);
+        assert_eq!(app.canvas.get(0, 0), None); // row 0 emptied
+        assert_eq!(row(&app, 1), "hello");
+        assert_eq!(app.cursor, (0, 1));
+    }
+
+    #[test]
+    fn newline_pushes_block_below_and_keeps_side_column() {
+        let mut app = App::new();
+        app.move_cursor(0, 0);
+        type_str(&mut app, "the cat"); // row 0, cols 0..=6
+        for (i, ch) in "dog".chars().enumerate() {
+            app.canvas.set(i as Coord, 1, ch); // block directly below, in-band
+        }
+        for (i, ch) in "NOTES".chars().enumerate() {
+            app.canvas.set(10 + i as Coord, 1, ch); // side column past a 2-blank gap
+        }
+        app.cursor = (4, 0); // on 'c' of "cat"
+        newline(&mut app);
+        assert_eq!(app.canvas.get(4, 0), None); // tail cleared on row 0
+        // Tail lands at the line start on row 1...
+        assert_eq!(app.canvas.get(0, 1), Some('c'));
+        assert_eq!(app.canvas.get(2, 1), Some('t'));
+        // ...the "dog" block is pushed down to row 2...
+        assert_eq!(app.canvas.get(0, 2), Some('d'));
+        assert_eq!(app.canvas.get(2, 2), Some('g'));
+        // ...and the NOTES side column is untouched on row 1.
+        assert_eq!(app.canvas.get(10, 1), Some('N'));
+        assert_eq!(app.canvas.get(14, 1), Some('S'));
     }
 
     #[test]

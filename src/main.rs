@@ -20,6 +20,7 @@ mod canvas;
 mod clipboard;
 mod editing;
 mod help;
+mod layout;
 mod locations;
 mod overview;
 mod persistence;

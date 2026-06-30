@@ -11,7 +11,7 @@ Cursor writes, the Insert/Overwrite mode, and how typed text lands on the canvas
 - `type_char(app, ch)` — Insert: `canvas.insert_shift` then `cursor.x += 1`; Overwrite: `canvas.set` then `cursor.x += 1`.
 - `backspace(app)` — `cursor.x -= 1`, then delete at cursor (reflow in Insert, gap in Overwrite).
 - `delete(app)` — delete the cell under the cursor (reflow in Insert, gap in Overwrite); cursor stays.
-- `newline(app)` — `cursor = (anchor_x, cursor.y + 1)`.
+- `newline(app)` — **split the line at the cursor** (Enter). The trailing run (words joined by single spaces, up to the first ≥2-blank gap) moves down one row, left-aligned to the line's start column, pushing the block(s) below down to make room (`layout::make_room`, see `src/layout/`). Cursor at/after the line end just drops to the line start on the next row; a blank row falls back to `anchor_x`.
 - `word_left(app)` / `word_right(app)` — **Option/Alt+Left/Right** jump the cursor by a word on its row. A word is a maximal run of non-whitespace cells (a typed space is a stored cell, so whitespace — not just an absent cell — separates words). `word_right` from inside a word lands on the next word's start, and past the last word lands one column after the final word char (end-of-content); `word_left` lands on the current word's start, then earlier word starts. No canvas change; resets `anchor_x` like other navigation.
 - `toggle_mode(app)` — flip Insert/Overwrite (no canvas change).
 - `paste(app, text)` — drop a rectangular block at the cursor (M6): line `i` at `cursor.y + i` from `cursor.x`; `\r\n` and bare `\r` line endings normalized to `\n` (terminals send `\r` in bracketed paste). **Block placement** — overwrites covered cells regardless of mode, never pushes content down; cursor ends at the end of the last pasted line.
@@ -24,7 +24,7 @@ Key dispatch lives in `main::handle_key`; printable input is ignored when Ctrl/A
 - Insert-mode shifting affects only the cursor's row.
 
 ## Decisions / open items
-- **Newline column** = the line anchor (`anchor_x`), set whenever navigation repositions the cursor. v1 choice; revisit if a remembered per-line start is wanted (plan open questions).
+- **Enter splits the line** (M15) — the trailing single-space-joined run moves down to the line's *content-derived* start column, pushing blocks below down (`layout::make_room`). Supersedes the earlier anchor-only newline. `anchor_x` is still the fallback for a blank row / end-of-line drop, because navigation resets it and can't be trusted as the line start.
 - **Paste = block placement** (overwrite, no push-down) — resolves plan open question #3. Revisit if push-down/insert-at-cursor is wanted.
 - One `char` per cell; combining/wide characters and embedded control chars (other than stripped `\r`) are a v1 limitation.
 - **Ctrl+I = Tab** historically (ASCII 0x09); it only toggles mode in terminals that distinguish them via the Kitty keyboard protocol (enabled in `main::setup_terminal`). In plain Terminal.app, Ctrl+I arrives as Tab and won't toggle.

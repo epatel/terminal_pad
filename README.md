@@ -20,7 +20,9 @@ Ships as a single self-contained binary.
   pans the view by ⅓ of a screen, carrying the cursor with it (reversible);
   **Option/Alt+Left/Right** jump a word.
 - **Editing** — type to insert; **Ctrl+I** toggles Insert/Overwrite;
-  Backspace/Delete/Enter.
+  Backspace/Delete. **Enter** splits the line at the cursor — the trailing words
+  (a run joined by single spaces) move down to the line's start, pushing the
+  block(s) below down to make room.
 - **Mouse** — click to position the cursor, **drag to select a rectangle**, and
   scroll-wheel to pan.
 - **Selection** — copy a selected block with **Ctrl+C** (to an internal buffer
@@ -96,7 +98,7 @@ contents.
 | Option/Alt+Left/Right | Jump a word back / forward |
 | Ctrl+I | Toggle Insert / Overwrite |
 | Backspace / Delete | Delete before / under cursor |
-| Enter | New line (returns to the line's start column) |
+| Enter | Split the line at the cursor — trailing words move down to the line's start, pushing blocks below down |
 | Ctrl+1 … Ctrl+9 | Jump to bookmark 1–9 |
 | Ctrl+Shift+1 … Ctrl+Shift+9 | Save bookmark 1–9 |
 | Ctrl+Z | Toggle zoom-out overview (Shift+arrows pan ⅓ there) |
@@ -150,6 +152,7 @@ flowchart LR
   app --> editing["editing — typing, modes, paste"]
   app --> locations["locations — bookmarks"]
   app --> overview["overview — minimap"]
+  app --> layout["layout — line model + push-down"]
   app --> selection["selection — rectangle + clip"]
   app --> persistence["persistence — JSON load/save"]
   app --> help["help — keybinding overlay"]

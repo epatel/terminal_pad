@@ -38,7 +38,7 @@ flowchart LR
 - **read_event** — block on a crossterm event (key, mouse, paste, resize). Bracketed paste and mouse capture are enabled, so a paste arrives as one `Event::Paste(String)` and clicks/drags/wheel as `Event::Mouse`.
 - **dispatch** — route the event to exactly one handler based on key/modifiers (or mouse kind).
 - **navigate** — arrows move the cursor by 1 cell; Shift+arrows jump the viewport by 1/3 of its width/height; Alt+Left/Right jump by a word.
-- **edit** — printable keys write a char at the cursor (Insert shifts the row's trailing cells right; Overwrite replaces in place); Backspace/Delete/Enter handled here; Ctrl+I toggles mode.
+- **edit** — printable keys write a char at the cursor (Insert shifts the row's trailing cells right; Overwrite replaces in place); Backspace/Delete handled here; Ctrl+I toggles mode. **Enter splits the line** at the cursor (the trailing single-space-joined run moves down to the line's start, pushing blocks below down — `layout`).
 - **paste** — insert a pasted block anchored at the cursor (bracketed paste, or the internal clip via Ctrl+V).
 - **locations** — Ctrl+1..9 jump the view/cursor to bookmark N; Ctrl+Shift+1..9 store the current location into slot N.
 - **selection** — Ctrl+C copies the rectangle (internal buffer + system clipboard), Del/Bksp clears it, Esc cancels.
@@ -54,6 +54,7 @@ flowchart LR
 - `src/persistence/` — load/save canvas + bookmarks (serde_json)
 - `src/render/` — ratatui drawing (incl. selection highlight)
 - `src/overview/` — Ctrl+Z zoomed-out minimap
+- `src/layout/` — the "line" model + Enter's make-room push-down
 - `src/help/` — Ctrl+H keybinding cheat-sheet overlay
 - `src/selection/` — click-drag rectangle model + copy/paste/clear
 - `src/clipboard.rs` — system-clipboard wrapper (arboard); single file, no dir
