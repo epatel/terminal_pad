@@ -322,6 +322,27 @@ mod tests {
     }
 
     #[test]
+    fn newline_pushes_whole_wide_line_below() {
+        // The reported case: a full-width line below the split must move down as a
+        // whole line, not be torn/overwritten by the narrower moved tail.
+        let mut app = App::new();
+        app.move_cursor(0, 0);
+        type_str(&mut app, "client closed"); // row 0, cols 0..=12
+        for (i, ch) in "0123456789ABCDEF".chars().enumerate() {
+            app.canvas.set(i as Coord, 1, ch); // wide line on row 1, cols 0..=15
+        }
+        app.cursor = (7, 0); // on 'c' of "closed"
+        newline(&mut app);
+        // Tail "closed" lands at the line start on row 1...
+        assert_eq!(app.canvas.get(0, 1), Some('c'));
+        assert_eq!(app.canvas.get(5, 1), Some('d'));
+        // ...and the wide line moved wholly to row 2 (its far end is gone from row 1).
+        assert_eq!(app.canvas.get(15, 1), None);
+        assert_eq!(app.canvas.get(0, 2), Some('0'));
+        assert_eq!(app.canvas.get(15, 2), Some('F'));
+    }
+
+    #[test]
     fn newline_pushes_block_below_and_keeps_side_column() {
         let mut app = App::new();
         app.move_cursor(0, 0);

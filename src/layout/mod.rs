@@ -20,69 +20,87 @@ fn filled_columns(canvas: &Canvas, y: Coord) -> Vec<Coord> {
         .collect()
 }
 
+/// The segments (lines) on row `y`, left to right, as inclusive `(start, end)`
+/// column spans. A segment is a single-space-joined run; a gap of ≥2 blank
+/// columns separates two segments.
+fn segments_on_row(canvas: &Canvas, y: Coord) -> Vec<(Coord, Coord)> {
+    let cols = filled_columns(canvas, y);
+    let mut segs = Vec::new();
+    let Some(&first) = cols.first() else {
+        return segs;
+    };
+    let (mut start, mut prev) = (first, first);
+    for &x in &cols[1..] {
+        if x - prev >= 3 {
+            segs.push((start, prev));
+            start = x;
+        }
+        prev = x;
+    }
+    segs.push((start, prev));
+    segs
+}
+
+/// Two inclusive column spans overlap.
+fn overlaps((a, b): (Coord, Coord), (c, d): (Coord, Coord)) -> bool {
+    a <= d && c <= b
+}
+
 /// Bounds `(start, end)` of the single-space-joined line on row `cy` containing
 /// the cursor column `cx`. The cursor counts as "on" the line for
 /// `start <= cx <= end + 1` (so the typing position just past the end still
 /// belongs to it). Returns `None` when `cx` is not on a line — a blank row, or
 /// parked in a gap of ≥2 blank columns.
 pub fn line_bounds(canvas: &Canvas, cx: Coord, cy: Coord) -> Option<(Coord, Coord)> {
-    let cols = filled_columns(canvas, cy);
-    if cols.is_empty() {
-        return None;
-    }
-    // Walk the filled columns, breaking a line wherever the gap to the next is
-    // ≥2 blanks (i.e. the columns are ≥3 apart). Return the line covering `cx`.
-    let mut start = cols[0];
-    let mut prev = cols[0];
-    for &x in &cols[1..] {
-        if x - prev >= 3 {
-            if (start..=prev + 1).contains(&cx) {
-                return Some((start, prev));
-            }
-            start = x;
+    segments_on_row(canvas, cy)
+        .into_iter()
+        .find(|&(s, e)| (s..=e + 1).contains(&cx))
+}
+
+/// Open row `at_row` across the band `[lo, hi]` by pushing **whole lines** down.
+/// Every segment on `at_row` that overlaps the band moves down one row; any
+/// segment it would land on moves too, cascading down until the shift lands on
+/// free space (a blank row, or a row whose content doesn't overlap). Lines move
+/// as units — a wide line below a narrow band is not torn — while segments that
+/// never overlap (a side column past a ≥2-blank gap) stay put. No-op when the
+/// band is already free on `at_row`.
+pub fn make_room(canvas: &mut Canvas, band: (Coord, Coord), at_row: Coord) {
+    // Flood downward: collect every segment that must shift down by one row.
+    let mut to_move: Vec<(Coord, Coord, Coord)> = Vec::new(); // (start, end, row)
+    let mut queue: Vec<(Coord, Coord, Coord)> = segments_on_row(canvas, at_row)
+        .into_iter()
+        .filter(|&seg| overlaps(seg, band))
+        .map(|(s, e)| (s, e, at_row))
+        .collect();
+    while let Some(seg @ (s, e, row)) = queue.pop() {
+        if to_move.contains(&seg) {
+            continue;
         }
-        prev = x;
+        to_move.push(seg);
+        for (s2, e2) in segments_on_row(canvas, row + 1) {
+            if overlaps((s2, e2), (s, e)) {
+                queue.push((s2, e2, row + 1));
+            }
+        }
     }
-    if (start..=prev + 1).contains(&cx) {
-        Some((start, prev))
-    } else {
-        None
-    }
-}
-
-/// Smallest row `r >= from` with no populated cell in columns `[lo, hi]`.
-fn first_free_row(canvas: &Canvas, (lo, hi): (Coord, Coord), from: Coord) -> Coord {
-    let mut r = from;
-    while (lo..=hi).any(|x| canvas.get(x, r).is_some()) {
-        r += 1;
-    }
-    r
-}
-
-/// Ensure row `at_row` is free within band `[lo, hi]` by shifting the contiguous
-/// occupied band-rows starting at `at_row` down by one, into the first fully-free
-/// row at/below it. No-op when `at_row` is already free. Moving the whole occupied
-/// stack into the first slack row is the cascade: stacked lines move together,
-/// while a block already separated by a blank row below is left untouched.
-pub fn make_room(canvas: &mut Canvas, (lo, hi): (Coord, Coord), at_row: Coord) {
-    let free = first_free_row(canvas, (lo, hi), at_row);
-    if free == at_row {
+    if to_move.is_empty() {
         return;
     }
-    // Collect every populated band cell in rows [at_row, free-1], then re-place it
-    // one row lower — collect-then-write so the shift can't clobber itself.
-    let mut moved: Vec<(Coord, Coord, char)> = Vec::new();
-    for y in at_row..free {
-        for x in lo..=hi {
-            if let Some(c) = canvas.get(x, y) {
-                moved.push((x, y, c));
+    // Collect every populated cell of the moving segments, then re-place it one row
+    // lower — collect-then-write so the shift can't clobber itself. Segments on a
+    // row never share columns, so targets never collide.
+    let mut cells: Vec<(Coord, Coord, char)> = Vec::new();
+    for &(s, e, row) in &to_move {
+        for x in s..=e {
+            if let Some(c) = canvas.get(x, row) {
+                cells.push((x, row, c));
             }
         }
     }
-    for &(x, y, _) in &moved {
+    for &(x, y, _) in &cells {
         canvas.clear(x, y);
     }
-    for (x, y, c) in moved {
+    for (x, y, c) in cells {
         canvas.set(x, y + 1, c);
     }
 }
@@ -171,6 +189,27 @@ mod tests {
         make_room(&mut c, (0, 2), 1);
         assert_eq!(row(&c, 2), "aaa"); // shifted into the gap
         assert_eq!(row(&c, 3), "ccc"); // untouched
+    }
+
+    #[test]
+    fn make_room_pushes_whole_wide_line_not_just_band() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 1, "the quick brown fox"); // one line, cols 0..=18
+        make_room(&mut c, (0, 4), 1); // band narrower than the line
+        assert_eq!(c.get(0, 1), None); // band freed on row 1
+        assert_eq!(c.get(18, 1), None); // and so is the far end — moved as a unit
+        assert_eq!(row(&c, 2), "the quick brown fox"); // whole line on row 2, not torn
+    }
+
+    #[test]
+    fn make_room_cascades_whole_stacked_lines() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 1, "aaaaaaaaaa"); // wide lines, stacked, no gap
+        put(&mut c, 0, 2, "bbbbbbbbbb");
+        make_room(&mut c, (0, 2), 1); // narrow band
+        assert_eq!(c.get(0, 1), None);
+        assert_eq!(row(&c, 2), "aaaaaaaaaa"); // both whole lines cascaded down
+        assert_eq!(row(&c, 3), "bbbbbbbbbb");
     }
 
     #[test]
