@@ -16,7 +16,7 @@ Absolute integer cell coordinates `(x, y)` as `Coord` (= `i64`), unbounded in al
 - `len()` — count of written cells
 - `insert_shift(x, y, ch)` — Insert-mode write; shifts the row's cells at `x' >= x` one right
 - `delete_shift(x, y)` — delete `(x, y)`; shifts the row's cells at `x' > x` one left
-- `row_cells(y) -> Vec<(Coord, char)>` — populated cells of a row, ascending by `x` (consumed in M8; carries a targeted `#[allow(dead_code)]` until then)
+- `cells() -> Vec<(Coord, Coord, char)>` — all written cells, sorted by `(y, x)`; used by persistence, the overview/selection, and tests to reconstruct rows
 
 ## Invariants
 - A cell is present-with-a-char or absent — never present-but-blank. Erase via `clear`, not `set(' ')`.
@@ -30,4 +30,4 @@ Absolute integer cell coordinates `(x, y)` as `Coord` (= `i64`), unbounded in al
 Writes: editing + paste handlers (M5/M6). Reads: render (visible window) (M3). This module owns the cell-storage contract only — cursor, scrolling, and bookmarks are separate features.
 
 ## Status
-Implemented in `mod.rs` with unit tests (M2). Wired into render (M3) and editing (M5); the blanket dead-code allow is gone, only `row_cells` keeps a targeted one until M8.
+Implemented in `mod.rs` with unit tests (M2). Wired into render (M3), editing (M5), persistence (M8), the overview (M9), and selection (M13). No dead-code allows remain.

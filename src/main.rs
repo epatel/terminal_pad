@@ -1,14 +1,19 @@
 //! terminal_pad — infinite-canvas TUI text pad.
 //!
-//! Terminal lifecycle (raw mode, alt screen, bracketed paste, panic-safe
-//! restore) + the blocking event loop and key dispatch. Feature logic lives in
-//! the per-feature modules, each with a co-located CLAUDE.md:
-//!   - canvas    (M2)      — the sparse infinite grid
-//!   - viewport  (M3, M4)  — visible window, scrolling, 1/3 jump
-//!   - render    (M3)      — paint the frame
-//!   - editing   (M5, M6)  — typing, Ctrl+I mode toggle, paste
-//!   - locations (M7)      — Ctrl+1..9 jump / Ctrl+Shift+1..9 save
-//!   - persistence (M8)    — see cards/feature-persistence.md (not built yet)
+//! Terminal lifecycle (raw mode, alt screen, bracketed paste, mouse capture,
+//! panic-safe restore) + the blocking event loop, CLI parsing, and key/mouse
+//! dispatch. Feature logic lives in the per-feature modules, each with a
+//! co-located CLAUDE.md (except the single-file `clipboard`):
+//!   - canvas      (M2)      — the sparse infinite grid
+//!   - viewport    (M3, M4)  — visible window, scrolling, 1/3 jump, scroll-wheel pan
+//!   - render      (M3)      — paint the frame (incl. selection highlight)
+//!   - editing     (M5, M6)  — typing, Ctrl+I mode toggle, paste, Alt+word jump
+//!   - locations   (M7)      — Ctrl+1..9 jump / Ctrl+Shift+1..9 save
+//!   - persistence (M8)      — JSON load/save of cells + slots + cursor
+//!   - overview    (M9)      — Ctrl+Z zoomed-out minimap
+//!   - help        (M10)     — Ctrl+H keybinding cheat sheet
+//!   - selection   (M13)     — click-drag rectangle + copy/paste/clear
+//!   - clipboard   (M13)     — system-clipboard wrapper (arboard)
 
 mod app;
 mod canvas;
@@ -215,9 +220,10 @@ fn data_dir() -> Result<PathBuf, String> {
     }
 }
 
-/// Enter raw mode + alternate screen, enable bracketed paste, and (when the
-/// terminal supports it) request key disambiguation so Shift+arrow and the
-/// F-keys report modifiers reliably — see cards/decision-language-rust.md.
+/// Enter raw mode + alternate screen, enable bracketed paste and mouse capture,
+/// and (when the terminal supports it) request key disambiguation so Shift+arrow,
+/// Ctrl+I, and Ctrl/Alt+key report modifiers reliably — see
+/// cards/decision-language-rust.md.
 fn setup_terminal() -> io::Result<Tui> {
     let mut stdout = io::stdout();
     enable_raw_mode()?;
