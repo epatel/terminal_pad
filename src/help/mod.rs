@@ -10,6 +10,7 @@ const BINDINGS: &[(&str, &str)] = &[
     ("Arrows", "move cursor"),
     ("Shift+Arrows", "pan view by 1/3 screen"),
     ("Opt+Left/Right", "jump word back / forward"),
+    ("Ctrl+A / Ctrl+E", "line start / end, hop parts"),
     ("Click / drag", "position cursor / select rect"),
     ("Scroll wheel", "pan view up / down"),
     ("", ""),

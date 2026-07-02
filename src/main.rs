@@ -462,6 +462,10 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
                 app.move_cursor(0, 1)
             }
         }
+        // Ctrl+A / Ctrl+E — start / end of the line under the cursor. Plain
+        // ASCII control codes (0x01/0x05), so no Kitty protocol needed.
+        KeyCode::Char('a') if ctrl => editing::line_start(app),
+        KeyCode::Char('e') if ctrl => editing::line_end(app),
         // Insert/Overwrite toggle. Ctrl+I needs a terminal that distinguishes it
         // from Tab (Kitty keyboard protocol — see notes).
         KeyCode::Char('i') if ctrl => editing::toggle_mode(app),

@@ -27,8 +27,9 @@ Triggered when working on Enter/`newline`, line detection, or block push-down.
   (a wide line below a narrow band is *not* torn), while a segment that never
   overlaps — a side column past a ≥2-blank gap — stays put. No-op if the band is
   free on `at_row` and the row below it. Implemented as a downward overlap-flood
-  over segments. Private helpers: `filled_columns`, `segments_on_row`,
-  `overlaps`, `displaced`.
+  over segments. Helpers: `segments_on_row` (`pub(crate)` — also used by
+  `editing::{line_start,line_end}` to hop to a neighboring part) and private
+  `filled_columns`, `overlaps`, `displaced`.
 
 ## How Enter uses it (`editing::newline`)
 `line_bounds(cursor)` → if the cursor is mid-line (`cx <= end`): capture the

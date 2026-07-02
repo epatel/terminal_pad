@@ -22,8 +22,9 @@ fn filled_columns(canvas: &Canvas, y: Coord) -> Vec<Coord> {
 
 /// The segments (lines) on row `y`, left to right, as inclusive `(start, end)`
 /// column spans. A segment is a single-space-joined run; a gap of ≥2 blank
-/// columns separates two segments.
-fn segments_on_row(canvas: &Canvas, y: Coord) -> Vec<(Coord, Coord)> {
+/// columns separates two segments. Crate-visible for `editing::{line_start,
+/// line_end}`'s hop to the neighboring part.
+pub(crate) fn segments_on_row(canvas: &Canvas, y: Coord) -> Vec<(Coord, Coord)> {
     let cols = filled_columns(canvas, y);
     let mut segs = Vec::new();
     let Some(&first) = cols.first() else {

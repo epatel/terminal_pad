@@ -125,6 +125,50 @@ pub fn word_left(app: &mut App) {
     }
 }
 
+/// Jump the cursor to the start of the line under it (Ctrl+A). The line is the
+/// single-space-joined segment from `layout::line_bounds` — in a side column the
+/// cursor goes to that column's start, not the row's leftmost content. Already
+/// at a start, or off any line (empty space, including past end+1): hop left to
+/// the end (typing position) of the nearest part on the row. No movement when
+/// nothing lies to the left.
+pub fn line_start(app: &mut App) {
+    let (x, y) = app.cursor;
+    if let Some((s, _)) = crate::layout::line_bounds(&app.canvas, x, y)
+        && x > s
+    {
+        move_cursor_x(app, s);
+        return;
+    }
+    if let Some(&(_, e)) = crate::layout::segments_on_row(&app.canvas, y)
+        .iter()
+        .rev()
+        .find(|&&(_, e)| e < x)
+    {
+        move_cursor_x(app, e + 1);
+    }
+}
+
+/// Jump the cursor one past the end of the line under it — the typing position,
+/// matching `word_right`'s end-of-content landing (Ctrl+E). Already at the end,
+/// or off any line (empty space): hop right to the start of the nearest part on
+/// the row. No movement when nothing lies to the right. Mirror of `line_start`,
+/// so alternating the two walks the row's parts.
+pub fn line_end(app: &mut App) {
+    let (x, y) = app.cursor;
+    if let Some((_, e)) = crate::layout::line_bounds(&app.canvas, x, y)
+        && x <= e
+    {
+        move_cursor_x(app, e + 1);
+        return;
+    }
+    if let Some(&(s, _)) = crate::layout::segments_on_row(&app.canvas, y)
+        .iter()
+        .find(|&&(s, _)| s > x)
+    {
+        move_cursor_x(app, s);
+    }
+}
+
 /// Word-character columns on row `y`, ascending: populated cells whose char is
 /// not whitespace. A typed space *is* a stored cell, so whitespace — not just an
 /// absent cell — separates words. `canvas.cells()` is sorted by `(y, x)`.
@@ -459,6 +503,77 @@ mod tests {
         assert_eq!(app.cursor, (3, 9));
         word_left(&mut app);
         assert_eq!(app.cursor, (3, 9));
+    }
+
+    #[test]
+    fn line_start_and_end_jump_within_segment() {
+        let mut app = App::new();
+        app.move_cursor(2, 0);
+        type_str(&mut app, "the cat sat"); // cols 2..=12
+        app.cursor = (6, 0); // on 'c' of "cat"
+        line_start(&mut app);
+        assert_eq!(app.cursor, (2, 0));
+        assert_eq!(app.anchor_x, 2); // navigation resets the anchor
+        line_end(&mut app);
+        assert_eq!(app.cursor, (13, 0)); // one past 't' of "sat" — typing position
+        line_start(&mut app); // end+1 still counts as on the line
+        assert_eq!(app.cursor, (2, 0));
+    }
+
+    #[test]
+    fn line_start_respects_side_column_segment() {
+        let mut app = App::new();
+        type_str(&mut app, "the cat"); // cols 0..=6
+        for (i, ch) in "NOTES".chars().enumerate() {
+            app.canvas.set(10 + i as Coord, 0, ch); // separate segment past a gap
+        }
+        app.cursor = (12, 0); // inside NOTES
+        line_start(&mut app);
+        assert_eq!(app.cursor, (10, 0)); // NOTES' start, not the row's col 0
+        line_end(&mut app);
+        assert_eq!(app.cursor, (15, 0)); // one past 'S'
+    }
+
+    #[test]
+    fn line_jumps_hop_to_neighbor_part_from_empty_space() {
+        let mut app = App::new();
+        type_str(&mut app, "abc"); // cols 0..=2
+        app.cursor = (7, 0); // empty space right of the part
+        line_start(&mut app);
+        assert_eq!(app.cursor, (3, 0)); // hops left to the part's end+1
+        app.cursor = (7, 0);
+        line_end(&mut app); // nothing to the right → no movement
+        assert_eq!(app.cursor, (7, 0));
+        app.cursor = (3, 5); // blank row: nothing either way
+        line_start(&mut app);
+        line_end(&mut app);
+        assert_eq!(app.cursor, (3, 5));
+    }
+
+    #[test]
+    fn line_jumps_walk_the_rows_parts() {
+        let mut app = App::new();
+        type_str(&mut app, "the cat"); // part 0..=6
+        for (i, ch) in "NOTES".chars().enumerate() {
+            app.canvas.set(10 + i as Coord, 0, ch); // part 10..=14
+        }
+        app.cursor = (3, 0);
+        line_end(&mut app);
+        assert_eq!(app.cursor.0, 7); // end of "the cat"
+        line_end(&mut app);
+        assert_eq!(app.cursor.0, 10); // at the end already → start of NOTES
+        line_end(&mut app);
+        assert_eq!(app.cursor.0, 15); // end of NOTES
+        line_end(&mut app);
+        assert_eq!(app.cursor.0, 15); // nothing further right
+        line_start(&mut app);
+        assert_eq!(app.cursor.0, 10); // back to NOTES' start
+        line_start(&mut app);
+        assert_eq!(app.cursor.0, 7); // at the start already → end of "the cat"
+        line_start(&mut app);
+        assert_eq!(app.cursor.0, 0);
+        line_start(&mut app);
+        assert_eq!(app.cursor.0, 0); // nothing further left
     }
 
     #[test]
