@@ -343,6 +343,23 @@ mod tests {
     }
 
     #[test]
+    fn newline_preserves_blank_separator_below() {
+        // Splitting a line whose next row is a blank separator must not consume
+        // it: the paragraph below moves down with its separator intact.
+        let mut app = App::new();
+        app.move_cursor(0, 0);
+        type_str(&mut app, "the cat"); // row 0
+        for (i, ch) in "dog".chars().enumerate() {
+            app.canvas.set(i as Coord, 2, ch); // row 1 blank, "dog" on row 2
+        }
+        app.cursor = (4, 0); // on 'c' of "cat"
+        newline(&mut app);
+        assert_eq!(app.canvas.get(0, 1), Some('c')); // tail lands on row 1
+        assert_eq!(app.canvas.get(0, 2), None); // separator survives, one row lower
+        assert_eq!(app.canvas.get(0, 3), Some('d')); // "dog" pushed to row 3
+    }
+
+    #[test]
     fn newline_pushes_block_below_and_keeps_side_column() {
         let mut app = App::new();
         app.move_cursor(0, 0);

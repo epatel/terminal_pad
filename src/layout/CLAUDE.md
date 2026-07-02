@@ -18,12 +18,17 @@ Triggered when working on Enter/`newline`, line detection, or block push-down.
   `None` on a blank row or when `cx` is parked inside a ≥2-blank gap. Pure.
 - `make_room(canvas: &mut Canvas, (lo, hi), at_row)` — open `at_row` across band
   `[lo, hi]` by pushing **whole lines** down. Every segment on `at_row` overlapping
-  the band moves down one row; any segment it would land on moves too, cascading
-  down until the shift reaches free space. Lines move **as units** (a wide line
-  below a narrow band is *not* torn), while a segment that never overlaps — a side
-  column past a ≥2-blank gap — stays put. No-op if the band is already free.
-  Implemented as a downward overlap-flood over segments. Private helpers:
-  `filled_columns`, `segments_on_row`, `overlaps`.
+  the band moves down one row; any segment it would land on **or trail by exactly
+  one blank row** moves too — a single blank separator row travels down with its
+  block instead of being consumed — cascading until the shift is absorbed by a
+  gap of **≥2 blank rows** (the vertical analogue of the ≥2-blank-column rule).
+  The seed applies the same lookahead: if `at_row` is free in the band but
+  `at_row + 1` is not, the content on `at_row + 1` moves. Lines move **as units**
+  (a wide line below a narrow band is *not* torn), while a segment that never
+  overlaps — a side column past a ≥2-blank gap — stays put. No-op if the band is
+  free on `at_row` and the row below it. Implemented as a downward overlap-flood
+  over segments. Private helpers: `filled_columns`, `segments_on_row`,
+  `overlaps`, `displaced`.
 
 ## How Enter uses it (`editing::newline`)
 `line_bounds(cursor)` → if the cursor is mid-line (`cx <= end`): capture the
@@ -42,5 +47,8 @@ back to the saved `anchor_x`.
 
 ## Status
 Implemented (M15) with unit tests (`line_bounds` single-space merge / ≥2-gap split
-/ end+1 / blank row; `make_room` no-op / single shift / cascade / gap-stop /
-whole-wide-line / cascaded-wide-lines / side-column-untouched).
+/ end+1 / blank row; `make_room` no-op / single shift / cascade / single-blank
+separator carried / ≥2-blank-row stop / blank-target seed / whole-wide-line /
+cascaded-wide-lines / side-column-untouched). 2026-07-02: single blank separator
+rows are now pushed along with their block (they used to be consumed when the
+split tail landed on one); only a ≥2-blank-row gap absorbs the shift.

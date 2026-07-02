@@ -57,31 +57,44 @@ pub fn line_bounds(canvas: &Canvas, cx: Coord, cy: Coord) -> Option<(Coord, Coor
         .find(|&(s, e)| (s..=e + 1).contains(&cx))
 }
 
+/// Segments displaced when content spanning `span` lands on row `landing`:
+/// the overlapping segments on `landing` itself, or — when `landing` holds none
+/// but the row just below does — those on `landing + 1`, so a single blank
+/// separator row travels down with its block instead of being consumed. Two
+/// consecutive blank rows absorb the shift (the vertical analogue of the
+/// ≥2-blank-column gap that ends a line).
+fn displaced(canvas: &Canvas, span: (Coord, Coord), landing: Coord) -> Vec<(Coord, Coord, Coord)> {
+    for row in [landing, landing + 1] {
+        let hits: Vec<(Coord, Coord, Coord)> = segments_on_row(canvas, row)
+            .into_iter()
+            .filter(|&seg| overlaps(seg, span))
+            .map(|(s, e)| (s, e, row))
+            .collect();
+        if !hits.is_empty() {
+            return hits;
+        }
+    }
+    Vec::new()
+}
+
 /// Open row `at_row` across the band `[lo, hi]` by pushing **whole lines** down.
-/// Every segment on `at_row` that overlaps the band moves down one row; any
-/// segment it would land on moves too, cascading down until the shift lands on
-/// free space (a blank row, or a row whose content doesn't overlap). Lines move
-/// as units — a wide line below a narrow band is not torn — while segments that
-/// never overlap (a side column past a ≥2-blank gap) stay put. No-op when the
-/// band is already free on `at_row`.
+/// Every segment on `at_row` (or, when `at_row` is free, on `at_row + 1` — a
+/// single blank separator moves with its block) that overlaps the band moves
+/// down one row; any segment it would land on or trail by one blank row moves
+/// too, cascading down until the shift is absorbed by a gap of ≥2 blank rows.
+/// Lines move as units — a wide line below a narrow band is not torn — while
+/// segments that never overlap (a side column past a ≥2-blank gap) stay put.
+/// No-op when the band is free on `at_row` and the row below it.
 pub fn make_room(canvas: &mut Canvas, band: (Coord, Coord), at_row: Coord) {
     // Flood downward: collect every segment that must shift down by one row.
     let mut to_move: Vec<(Coord, Coord, Coord)> = Vec::new(); // (start, end, row)
-    let mut queue: Vec<(Coord, Coord, Coord)> = segments_on_row(canvas, at_row)
-        .into_iter()
-        .filter(|&seg| overlaps(seg, band))
-        .map(|(s, e)| (s, e, at_row))
-        .collect();
+    let mut queue: Vec<(Coord, Coord, Coord)> = displaced(canvas, band, at_row);
     while let Some(seg @ (s, e, row)) = queue.pop() {
         if to_move.contains(&seg) {
             continue;
         }
         to_move.push(seg);
-        for (s2, e2) in segments_on_row(canvas, row + 1) {
-            if overlaps((s2, e2), (s, e)) {
-                queue.push((s2, e2, row + 1));
-            }
-        }
+        queue.extend(displaced(canvas, (s, e), row + 1));
     }
     if to_move.is_empty() {
         return;
@@ -182,13 +195,33 @@ mod tests {
     }
 
     #[test]
-    fn make_room_ignores_block_below_a_gap() {
+    fn make_room_carries_single_blank_separator_down() {
         let mut c = Canvas::new();
         put(&mut c, 0, 1, "aaa");
-        put(&mut c, 0, 3, "ccc"); // row 2 is a blank gap
+        put(&mut c, 0, 3, "ccc"); // row 2 is a single-blank separator
         make_room(&mut c, (0, 2), 1);
-        assert_eq!(row(&c, 2), "aaa"); // shifted into the gap
-        assert_eq!(row(&c, 3), "ccc"); // untouched
+        assert_eq!(row(&c, 2), "aaa");
+        assert_eq!(c.get(0, 3), None); // separator preserved, one row lower
+        assert_eq!(row(&c, 4), "ccc");
+    }
+
+    #[test]
+    fn make_room_stops_at_two_blank_rows() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 1, "aaa");
+        put(&mut c, 0, 4, "ccc"); // rows 2 and 3 blank: a ≥2-row gap
+        make_room(&mut c, (0, 2), 1);
+        assert_eq!(row(&c, 2), "aaa"); // shift absorbed by the gap
+        assert_eq!(row(&c, 4), "ccc"); // untouched, still ≥1 blank row apart
+    }
+
+    #[test]
+    fn make_room_seeds_past_blank_target_row() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 2, "bbb"); // at_row 1 itself is blank
+        make_room(&mut c, (0, 2), 1);
+        assert_eq!(c.get(0, 2), None); // row 2 freed so row 1's blank survives
+        assert_eq!(row(&c, 3), "bbb");
     }
 
     #[test]
