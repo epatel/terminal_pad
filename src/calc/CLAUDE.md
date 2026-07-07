@@ -33,8 +33,20 @@ No tag on the line (or a blank row / gap) → plain `editing::newline`.
   values, and re-Entering an assignment line recomputes). Gives `+ - * / % ^`,
   comparisons, booleans, strings, and builtins (`min`, `max`, `floor`,
   `math::sqrt`, `math::sin`, …).
+- **All numbers are floats**: bare integer literals are rewritten `5` → `5.0`
+  before evaluation (`floatify`), so division never truncates — `5/2=` → `2.5`,
+  not evalexpr's integer `2`. Digit runs inside identifiers (`x2`) and float
+  literals are left alone.
+- **Hex/binary conversion**: `0xFF` / `0b1010` literals are decoded to decimal
+  before evaluation (`decode_radix`, runs ahead of `floatify` — together
+  `prepare`); malformed literals (`0x`, `0b12`) are left for evalexpr to
+  reject. Encoding goes through custom context functions `hex(v)` / `bin(v)`
+  (registered in `CalcState::default`, uppercase hex digits, sign in front)
+  returning strings — `hex(1000)=` → `0x3E8`, `bin(0xFF)=` → `0b11111111`.
+  Fractional or >2^53 values are an error. String results display unquoted.
 - Floats are formatted to 10 decimals with trailing zeros trimmed
-  (`0.1+0.2=` → `0.3`); huge/non-finite fall back to plain display.
+  (`0.1+0.2=` → `0.3`, `5+3=` → `8`); huge/non-finite fall back to plain
+  display.
 - **Errors never touch the canvas**: a failed eval/assign puts `calc: <err>` in
   the status line and consumes the Enter. A successful assign also confirms in
   the status line.

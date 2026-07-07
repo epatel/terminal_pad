@@ -31,8 +31,11 @@ Ships as a single self-contained binary.
   `[Calc] 1+2*3=` inserts the result after the `=`; `[Calc] x = 5+3` stores a
   session variable (its value is appended) and opens a fresh `[Calc]` line;
   Enter on an already-computed line keeps chaining tagged lines. Arithmetic,
-  `%`/`^`, and `math::sqrt`-style functions via `evalexpr`; errors go to the
-  status line, never onto the canvas.
+  `%`/`^`, and `math::sqrt`-style functions via `evalexpr`; all numbers are
+  treated as floats, so `5/2=` gives `2.5` (never integer division); hex and
+  binary work both ways — `0xFF + 1=` → `256`, `hex(1000)=` → `0x3E8`,
+  `bin(0xFF)=` → `0b11111111`; errors go to the status line, never onto the
+  canvas.
 - **Mouse** — click to position the cursor, **drag to select a rectangle**, and
   scroll-wheel to pan.
 - **Selection** — copy a selected block with **Ctrl+C** (to an internal buffer

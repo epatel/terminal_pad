@@ -8,7 +8,10 @@
 //! the layout segment under the cursor, so a tag past a ≥2-blank gap (a side
 //! column) is not seen. See ./CLAUDE.md.
 
-use evalexpr::{ContextWithMutableVariables, HashMapContext, Value};
+use evalexpr::{
+    ContextWithMutableFunctions, ContextWithMutableVariables, EvalexprError, Function,
+    HashMapContext, Value,
+};
 
 use crate::app::App;
 
@@ -24,10 +27,39 @@ pub struct CalcState {
 
 impl Default for CalcState {
     fn default() -> Self {
-        Self {
-            ctx: HashMapContext::new(),
-        }
+        let mut ctx = HashMapContext::new();
+        // Conversion helpers: hex(v) / bin(v) render a whole number as an
+        // 0x… / 0b… string. Registration on a fresh context cannot fail.
+        let _ = ctx.set_function(
+            "hex".into(),
+            Function::new(|arg| radix_str(arg, 16).map(Value::String)),
+        );
+        let _ = ctx.set_function(
+            "bin".into(),
+            Function::new(|arg| radix_str(arg, 2).map(Value::String)),
+        );
+        Self { ctx }
     }
+}
+
+/// Render a whole numeric value in `radix` (16 → `0x3E8`, 2 → `0b1010`),
+/// uppercase hex digits, sign in front. Errors on fractional values and on
+/// floats too large to hold an exact integer (> 2^53).
+fn radix_str(v: &Value, radix: u32) -> Result<String, EvalexprError> {
+    let n = match v {
+        Value::Int(i) => *i as i128,
+        Value::Float(f) if f.fract() == 0.0 && f.abs() <= 2f64.powi(53) => *f as i128,
+        _ => {
+            return Err(EvalexprError::CustomMessage(
+                "hex()/bin() need a whole number".into(),
+            ));
+        }
+    };
+    let (sign, mag) = if n < 0 { ("-", -n) } else { ("", n) };
+    Ok(match radix {
+        16 => format!("{sign}0x{mag:X}"),
+        _ => format!("{sign}0b{mag:b}"),
+    })
 }
 
 /// What Enter should do with the text between the `[Calc]` tag and the cursor.
@@ -66,24 +98,26 @@ pub fn enter(app: &mut App) {
                 app.status = "calc: empty expression".into();
                 return;
             }
-            match evalexpr::eval_with_context(&expr, &app.calc.ctx) {
+            match evalexpr::eval_with_context(&prepare(&expr), &app.calc.ctx) {
                 Ok(v) => insert_str(app, &format_value(&v)),
                 Err(e) => app.status = format!("calc: {e}"),
             }
         }
-        Action::Assign(name, rhs) => match evalexpr::eval_with_context(&rhs, &app.calc.ctx) {
-            Ok(v) => {
-                let shown = format_value(&v);
-                if let Err(e) = app.calc.ctx.set_value(name.clone(), v) {
-                    app.status = format!("calc: {e}");
-                    return;
+        Action::Assign(name, rhs) => {
+            match evalexpr::eval_with_context(&prepare(&rhs), &app.calc.ctx) {
+                Ok(v) => {
+                    let shown = format_value(&v);
+                    if let Err(e) = app.calc.ctx.set_value(name.clone(), v) {
+                        app.status = format!("calc: {e}");
+                        return;
+                    }
+                    insert_str(app, &format!(" = {shown}"));
+                    app.status = format!("calc: {name} = {shown}");
+                    chain_newline(app, &prefix);
                 }
-                insert_str(app, &format!(" = {shown}"));
-                app.status = format!("calc: {name} = {shown}");
-                chain_newline(app, &prefix);
+                Err(e) => app.status = format!("calc: {e}"),
             }
-            Err(e) => app.status = format!("calc: {e}"),
-        },
+        }
         Action::Chain => chain_newline(app, &prefix),
     }
 }
@@ -134,6 +168,83 @@ fn split_assignment(body: &str) -> Option<(String, String)> {
     Some((name.to_string(), rhs.to_string()))
 }
 
+/// Prepare an expression for `evalexpr`: decode `0x…`/`0b…` literals to
+/// decimal, then rewrite bare integer literals as floats.
+fn prepare(expr: &str) -> String {
+    floatify(&decode_radix(expr))
+}
+
+/// Decode hexadecimal (`0xFF`) and binary (`0b1010`) integer literals to
+/// decimal — `evalexpr` has no radix literals of its own. `0X`/`0B` prefixes
+/// work too; the sign stays outside the literal (`-0xFF` is unary minus).
+/// A malformed or overflowing literal (`0x`, `0xFG`, `0b12`) is left as-is
+/// for `evalexpr` to reject, as is a digit run inside an identifier (`a0xF`).
+fn decode_radix(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let joins = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
+    let mut out = String::with_capacity(expr.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let fresh = i == 0 || !joins(chars[i - 1]);
+        let radix = match (fresh, chars.get(i), chars.get(i + 1)) {
+            (true, Some('0'), Some('x' | 'X')) => Some(16),
+            (true, Some('0'), Some('b' | 'B')) => Some(2),
+            _ => None,
+        };
+        if let Some(r) = radix {
+            let start = i + 2;
+            let mut end = start;
+            while end < chars.len() && chars[end].is_digit(r) {
+                end += 1;
+            }
+            let digits: String = chars[start..end].iter().collect();
+            let clean = end >= chars.len() || !joins(chars[end]);
+            if clean
+                && !digits.is_empty()
+                && let Ok(v) = i128::from_str_radix(&digits, r)
+            {
+                out.push_str(&v.to_string());
+                i = end;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Rewrite bare integer literals as floats (`5` → `5.0`) so all arithmetic is
+/// float arithmetic — without this, `evalexpr` gives `5/2 = 2` (integer
+/// division), which reads wrong on a calculator. A digit run is left alone
+/// when it is part of an identifier (`x2`), a float (`1.5`, `.5`), or an
+/// exponent-style token — i.e. when the char before or after it is
+/// alphanumeric, `_`, or `.`. `format_value` trims the `.0` back off whole
+/// results, so `5+3=` still shows `8`.
+fn floatify(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut out = String::with_capacity(expr.len());
+    let mut i = 0;
+    let joins = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
+    while i < chars.len() {
+        let c = chars[i];
+        out.push(c);
+        if c.is_ascii_digit() && (i == 0 || !joins(chars[i - 1])) {
+            let mut j = i;
+            while j + 1 < chars.len() && chars[j + 1].is_ascii_digit() {
+                j += 1;
+                out.push(chars[j]);
+            }
+            if j + 1 >= chars.len() || !joins(chars[j + 1]) {
+                out.push_str(".0");
+            }
+            i = j;
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Render an evaluation result for the canvas. Floats are rounded to 10
 /// decimals with trailing zeros trimmed, so `0.1+0.2` reads `0.3`, not
 /// `0.30000000000000004`; huge or non-finite floats fall back to their plain
@@ -149,6 +260,8 @@ fn format_value(v: &Value) -> String {
                 s.to_string()
             }
         }
+        // Bare string, no quotes — hex()/bin() results land as typed text.
+        Value::String(s) => s.clone(),
         other => other.to_string(),
     }
 }
@@ -223,6 +336,90 @@ mod tests {
         enter(&mut app);
         assert_eq!(row(&app, 0), "[Calc] 1+2*3=7");
         assert_eq!(app.cursor, (14, 0)); // after the result, no newline
+    }
+
+    #[test]
+    fn floatify_targets_only_bare_integer_literals() {
+        assert_eq!(floatify("5/2"), "5.0/2.0");
+        assert_eq!(floatify("10+300"), "10.0+300.0");
+        assert_eq!(floatify("1.5/3"), "1.5/3.0"); // float literal untouched
+        assert_eq!(floatify("x2 + 5"), "x2 + 5.0"); // identifier untouched
+        assert_eq!(floatify("math::sqrt(2)"), "math::sqrt(2.0)");
+        assert_eq!(floatify(""), "");
+    }
+
+    #[test]
+    fn decode_radix_handles_hex_bin_and_malformed() {
+        assert_eq!(decode_radix("0xFF + 1"), "255 + 1");
+        assert_eq!(decode_radix("0b1010 * 2"), "10 * 2");
+        assert_eq!(decode_radix("0XfF"), "255"); // any prefix/digit case
+        assert_eq!(decode_radix("-0xFF"), "-255"); // sign outside the literal
+        assert_eq!(decode_radix("a0xF"), "a0xF"); // inside an identifier
+        assert_eq!(decode_radix("0x"), "0x"); // malformed: no digits
+        assert_eq!(decode_radix("0b12"), "0b12"); // malformed: bad digit
+        assert_eq!(decode_radix("0xFG"), "0xFG"); // malformed: bad digit
+    }
+
+    #[test]
+    fn hex_and_bin_literals_evaluate() {
+        let mut app = App::new();
+        type_str(&mut app, "[Calc] 0xFF + 1=");
+        enter(&mut app);
+        assert_eq!(row(&app, 0), "[Calc] 0xFF + 1=256");
+    }
+
+    #[test]
+    fn hex_and_bin_functions_encode_uppercase() {
+        let mut app = App::new();
+        type_str(&mut app, "[Calc] hex(1000)=");
+        enter(&mut app);
+        assert_eq!(row(&app, 0), "[Calc] hex(1000)=0x3E8");
+        enter(&mut app); // chain to the next line
+        type_str(&mut app, "bin(0xFF)=");
+        enter(&mut app);
+        assert_eq!(row(&app, 1), "[Calc] bin(0xFF)=0b11111111");
+    }
+
+    #[test]
+    fn hex_of_a_variable_and_negative_values() {
+        let mut app = App::new();
+        type_str(&mut app, "[Calc] x = 0b1010 * 2");
+        enter(&mut app);
+        assert_eq!(row(&app, 0), "[Calc] x = 0b1010 * 2 = 20");
+        type_str(&mut app, "hex(x)=");
+        enter(&mut app);
+        assert_eq!(row(&app, 1), "[Calc] hex(x)=0x14");
+        enter(&mut app);
+        type_str(&mut app, "hex(0 - 256)=");
+        enter(&mut app);
+        assert_eq!(row(&app, 2), "[Calc] hex(0 - 256)=-0x100");
+    }
+
+    #[test]
+    fn hex_of_a_fraction_is_an_error() {
+        let mut app = App::new();
+        type_str(&mut app, "[Calc] hex(1.5)=");
+        enter(&mut app);
+        assert_eq!(row(&app, 0), "[Calc] hex(1.5)="); // untouched
+        assert!(app.status.starts_with("calc:"));
+    }
+
+    #[test]
+    fn division_of_two_ints_is_float() {
+        let mut app = App::new();
+        type_str(&mut app, "[Calc] 5/2=");
+        enter(&mut app);
+        assert_eq!(row(&app, 0), "[Calc] 5/2=2.5");
+    }
+
+    #[test]
+    fn division_through_a_variable_is_float() {
+        let mut app = App::new();
+        type_str(&mut app, "[Calc] x = 5");
+        enter(&mut app); // stores x (as a float) and chains
+        type_str(&mut app, "x/2=");
+        enter(&mut app);
+        assert_eq!(row(&app, 1), "[Calc] x/2=2.5");
     }
 
     #[test]
