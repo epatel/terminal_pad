@@ -14,8 +14,10 @@
 //!   - help        (M10)     — Ctrl+H keybinding cheat sheet
 //!   - selection   (M13)     — click-drag rectangle + copy/paste/clear
 //!   - clipboard   (M13)     — system-clipboard wrapper (arboard)
+//!   - calc        (M18)     — [Calc] tag calculator on Enter
 
 mod app;
+mod calc;
 mod canvas;
 mod clipboard;
 mod editing;
@@ -466,6 +468,10 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         // ASCII control codes (0x01/0x05), so no Kitty protocol needed.
         KeyCode::Char('a') if ctrl => editing::line_start(app),
         KeyCode::Char('e') if ctrl => editing::line_end(app),
+        // Ctrl+D / Ctrl+K — delete char (pull the line left) / delete to the
+        // line's end. Segment-aware; plain ASCII control codes.
+        KeyCode::Char('d') if ctrl => editing::delete_pull(app),
+        KeyCode::Char('k') if ctrl => editing::kill_to_end(app),
         // Insert/Overwrite toggle. Ctrl+I needs a terminal that distinguishes it
         // from Tab (Kitty keyboard protocol — see notes).
         KeyCode::Char('i') if ctrl => editing::toggle_mode(app),
@@ -473,7 +479,9 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         KeyCode::Char('s') if ctrl => save_now(app),
         KeyCode::Backspace => editing::backspace(app),
         KeyCode::Delete => editing::delete(app),
-        KeyCode::Enter => editing::newline(app),
+        // Enter goes through the calculator first: on a line with a [Calc] tag
+        // it evaluates / assigns / chains, else it's a normal newline (M18).
+        KeyCode::Enter => calc::enter(app),
         // Locations: Ctrl+1..9 jump, Ctrl+Shift+1..9 save. Needs a terminal that
         // reports Ctrl+digit modifiers (Kitty keyboard protocol — see notes).
         KeyCode::Char(c) if ctrl && locations::slot_for_digit(c).is_some() => {

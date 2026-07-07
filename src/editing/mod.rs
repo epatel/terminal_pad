@@ -96,6 +96,42 @@ pub fn newline(app: &mut App) {
     app.viewport.scroll_to_show(app.cursor);
 }
 
+/// Delete the cell under the cursor and pull the rest of its line left by one
+/// (Ctrl+D). Segment-aware: only cells of the line under the cursor (per
+/// `layout::line_bounds`) move — a side column past a ≥2-blank gap stays put,
+/// unlike insert-mode Delete whose row reflow pulls everything on the row.
+/// No-op off a line or at/past its end (nothing under the cursor to delete).
+pub fn delete_pull(app: &mut App) {
+    let (cx, cy) = app.cursor;
+    let Some((_, e)) = crate::layout::line_bounds(&app.canvas, cx, cy) else {
+        return;
+    };
+    if cx > e {
+        return;
+    }
+    for x in cx..e {
+        match app.canvas.get(x + 1, cy) {
+            Some(c) => app.canvas.set(x, cy, c),
+            None => app.canvas.clear(x, cy),
+        }
+    }
+    app.canvas.clear(e, cy);
+}
+
+/// Delete from the cursor to the end of its line (Ctrl+K). Segment-aware: only
+/// the line under the cursor (per `layout::line_bounds`) is cleared — content
+/// past a ≥2-blank gap stays. Cursor stays put; no-op off a line or at/past
+/// its end.
+pub fn kill_to_end(app: &mut App) {
+    let (cx, cy) = app.cursor;
+    let Some((_, e)) = crate::layout::line_bounds(&app.canvas, cx, cy) else {
+        return;
+    };
+    for x in cx..=e {
+        app.canvas.clear(x, cy);
+    }
+}
+
 /// Jump the cursor to the start of the next word on its row (Option/Alt+Right).
 /// A word is a maximal run of non-whitespace cells; blanks and whitespace cells
 /// separate them. From inside a word this lands on the next word's first cell;
@@ -328,6 +364,61 @@ mod tests {
         assert_eq!(app.canvas.get(0, 0), Some('a'));
         assert_eq!(app.canvas.get(1, 0), None); // gap, not pulled left
         assert_eq!(app.canvas.get(2, 0), Some('c'));
+    }
+
+    #[test]
+    fn delete_pull_shifts_only_the_segment() {
+        let mut app = App::new();
+        type_str(&mut app, "the cat"); // cols 0..=6
+        for (i, ch) in "NOTES".chars().enumerate() {
+            app.canvas.set(10 + i as Coord, 0, ch); // side column past a ≥2 gap
+        }
+        app.cursor = (4, 0); // on 'c' of "cat"
+        delete_pull(&mut app);
+        assert_eq!(row(&app, 0), "the atNOTES"); // "at" pulled left...
+        assert_eq!(app.canvas.get(6, 0), None); // ...segment end freed...
+        assert_eq!(app.canvas.get(10, 0), Some('N')); // ...NOTES untouched
+        assert_eq!(app.cursor, (4, 0)); // cursor stays
+    }
+
+    #[test]
+    fn delete_pull_noop_off_line_or_at_end() {
+        let mut app = App::new();
+        type_str(&mut app, "abc"); // cols 0..=2, cursor at 3 (end+1)
+        delete_pull(&mut app); // nothing under the cursor
+        assert_eq!(row(&app, 0), "abc");
+        app.cursor = (7, 0); // empty space past the line
+        delete_pull(&mut app);
+        assert_eq!(row(&app, 0), "abc");
+        app.cursor = (0, 5); // blank row
+        delete_pull(&mut app);
+        assert_eq!(row(&app, 0), "abc");
+    }
+
+    #[test]
+    fn kill_to_end_clears_segment_tail_only() {
+        let mut app = App::new();
+        type_str(&mut app, "the cat sat"); // cols 0..=10
+        for (i, ch) in "NOTES".chars().enumerate() {
+            app.canvas.set(14 + i as Coord, 0, ch); // side column past a ≥2 gap
+        }
+        app.cursor = (4, 0); // on 'c' of "cat"
+        kill_to_end(&mut app);
+        assert_eq!(row(&app, 0), "the NOTES"); // tail cleared, side column kept
+        assert_eq!(app.canvas.get(4, 0), None);
+        assert_eq!(app.canvas.get(10, 0), None);
+        assert_eq!(app.cursor, (4, 0)); // cursor stays
+    }
+
+    #[test]
+    fn kill_to_end_noop_off_line_or_at_end() {
+        let mut app = App::new();
+        type_str(&mut app, "abc"); // cursor at 3 (end+1)
+        kill_to_end(&mut app); // nothing right of the cursor on the line
+        assert_eq!(row(&app, 0), "abc");
+        app.cursor = (7, 0); // empty space
+        kill_to_end(&mut app);
+        assert_eq!(row(&app, 0), "abc");
     }
 
     #[test]

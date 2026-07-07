@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use crate::calc::CalcState;
 use crate::canvas::{Canvas, Coord};
 use crate::editing::EditMode;
 use crate::locations::{Location, SLOT_COUNT};
@@ -38,6 +39,8 @@ pub struct App {
     pub dragging: bool,
     /// Internal copy buffer: the last copied block as rows of chars (Ctrl+C → Ctrl+V).
     pub clip: Option<Vec<Vec<char>>>,
+    /// Session-only calculator variables for `[Calc]` lines (not persisted).
+    pub calc: CalcState,
 }
 
 impl App {
@@ -56,6 +59,7 @@ impl App {
             selection: None,
             dragging: false,
             clip: None,
+            calc: CalcState::default(),
         }
     }
 

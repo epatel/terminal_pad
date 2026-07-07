@@ -9,7 +9,8 @@ plain JSON file.
 
 Built in Rust with [`ratatui`](https://ratatui.rs) (rendering),
 [`crossterm`](https://docs.rs/crossterm) (input/terminal), `serde`
-(persistence), and [`arboard`](https://docs.rs/arboard) (system clipboard).
+(persistence), [`arboard`](https://docs.rs/arboard) (system clipboard), and
+[`evalexpr`](https://docs.rs/evalexpr) (the inline calculator).
 Ships as a single self-contained binary.
 
 ## Features
@@ -18,11 +19,20 @@ Ships as a single self-contained binary.
   cells use memory.
 - **Navigation** — arrows move the cursor (the view follows); **Shift+arrow**
   pans the view by ⅓ of a screen, carrying the cursor with it (reversible);
-  **Option/Alt+Left/Right** jump a word.
+  **Option/Alt+Left/Right** jump a word; **Ctrl+A / Ctrl+E** jump to the line's
+  start / end (and hop between parts of the row).
 - **Editing** — type to insert; **Ctrl+I** toggles Insert/Overwrite;
-  Backspace/Delete. **Enter** splits the line at the cursor — the trailing words
-  (a run joined by single spaces) move down to the line's start, pushing the
-  block(s) below down to make room.
+  Backspace/Delete; **Ctrl+D** deletes the char under the cursor and pulls the
+  rest of its line left, **Ctrl+K** clears to the line's end — both stop at a
+  ≥2-blank gap, so side-by-side blocks stay put. **Enter** splits the line at
+  the cursor — the trailing words (a run joined by single spaces) move down to
+  the line's start, pushing the block(s) below down to make room.
+- **Calculator** — on a line tagged `[Calc]` (any case), **Enter** evaluates:
+  `[Calc] 1+2*3=` inserts the result after the `=`; `[Calc] x = 5+3` stores a
+  session variable (its value is appended) and opens a fresh `[Calc]` line;
+  Enter on an already-computed line keeps chaining tagged lines. Arithmetic,
+  `%`/`^`, and `math::sqrt`-style functions via `evalexpr`; errors go to the
+  status line, never onto the canvas.
 - **Mouse** — click to position the cursor, **drag to select a rectangle**, and
   scroll-wheel to pan.
 - **Selection** — copy a selected block with **Ctrl+C** (to an internal buffer
@@ -96,9 +106,13 @@ contents.
 | Arrows | Move cursor (view follows) |
 | Shift+Arrows | Pan view ⅓ screen (cursor moves too) |
 | Option/Alt+Left/Right | Jump a word back / forward |
+| Ctrl+A / Ctrl+E | Jump to line start / end (hops between parts of the row) |
 | Ctrl+I | Toggle Insert / Overwrite |
 | Backspace / Delete | Delete before / under cursor |
+| Ctrl+D | Delete the char under the cursor, pulling its line left (stops at a ≥2-blank gap) |
+| Ctrl+K | Delete from the cursor to the line's end (stops at a ≥2-blank gap) |
 | Enter | Split the line at the cursor — trailing words move down to the line's start, pushing blocks below down |
+| Enter on a `[Calc]` line | Calculator: `expr=` inserts the result; `name = expr` assigns a session variable; otherwise chains a new `[Calc]` line |
 | Ctrl+1 … Ctrl+9 | Jump to bookmark 1–9 |
 | Ctrl+Shift+1 … Ctrl+Shift+9 | Save bookmark 1–9 |
 | Ctrl+Z | Toggle zoom-out overview (Shift+arrows pan ⅓ there) |
@@ -131,7 +145,7 @@ and the cursor.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "cells": [ { "x": 0, "y": 0, "c": "H" } ],
   "slots": [ null, { "cursor": [40, 12], "origin": [38, 10] }, null, ... ],
   "cursor": [0, 0]
@@ -150,6 +164,7 @@ flowchart LR
   app --> canvas["canvas — sparse grid"]
   app --> viewport["viewport — scroll / pan math"]
   app --> editing["editing — typing, modes, paste"]
+  app --> calc["calc — [Calc] tag calculator"]
   app --> locations["locations — bookmarks"]
   app --> overview["overview — minimap"]
   app --> layout["layout — line model + push-down"]

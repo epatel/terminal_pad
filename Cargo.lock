@@ -377,6 +377,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "evalexpr"
+version = "11.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aff27af350e7b53e82aac3e5ab6389abd8f280640ac034508dff0608c4c7e5"
+
+[[package]]
 name = "fancy-regex"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1454,10 +1460,11 @@ dependencies = [
 
 [[package]]
 name = "terminal_pad"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "crossterm",
+ "evalexpr",
  "ratatui",
  "serde",
  "serde_json",
