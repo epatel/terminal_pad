@@ -75,19 +75,18 @@ enum Action {
 }
 
 /// The Enter hook: dispatch to the calculator when a `[Calc]` tag lies left of
-/// the cursor on its line, else fall through to the normal `editing::newline`.
-pub fn enter(app: &mut App) {
+/// the cursor on its line. Returns `false` (canvas untouched) when there is no
+/// tag, so the caller can fall through to the next Enter handler.
+pub fn enter(app: &mut App) -> bool {
     let (cx, cy) = app.cursor;
     let Some((s, _)) = crate::layout::line_bounds(&app.canvas, cx, cy) else {
-        crate::editing::newline(app);
-        return;
+        return false;
     };
     let left: Vec<char> = (s..cx)
         .map(|x| app.canvas.get(x, cy).unwrap_or(' '))
         .collect();
     let Some(t) = tag_end(&left) else {
-        crate::editing::newline(app);
-        return;
+        return false;
     };
     // Chained lines reuse the tag exactly as typed on this line (case kept).
     let prefix: String = left[t - TAG_LEN..t].iter().chain([&' ']).collect();
@@ -96,7 +95,7 @@ pub fn enter(app: &mut App) {
         Action::Eval(expr) => {
             if expr.is_empty() {
                 app.status = "calc: empty expression".into();
-                return;
+                return true;
             }
             match evalexpr::eval_with_context(&prepare(&expr), &app.calc.ctx) {
                 Ok(v) => insert_str(app, &format_value(&v)),
@@ -109,7 +108,7 @@ pub fn enter(app: &mut App) {
                     let shown = format_value(&v);
                     if let Err(e) = app.calc.ctx.set_value(name.clone(), v) {
                         app.status = format!("calc: {e}");
-                        return;
+                        return true;
                     }
                     insert_str(app, &format!(" = {shown}"));
                     app.status = format!("calc: {name} = {shown}");
@@ -120,6 +119,7 @@ pub fn enter(app: &mut App) {
         }
         Action::Chain => chain_newline(app, &prefix),
     }
+    true
 }
 
 /// Char offset just past the rightmost case-insensitive `[calc]` in `text`,
@@ -481,9 +481,9 @@ mod tests {
     fn no_tag_falls_through_to_normal_newline() {
         let mut app = App::new();
         type_str(&mut app, "hello");
-        enter(&mut app);
-        assert_eq!(app.cursor, (0, 1));
-        assert_eq!(row(&app, 1), ""); // no prefix typed
+        assert!(!enter(&mut app)); // not handled — caller does the newline
+        assert_eq!(app.cursor, (5, 0)); // canvas and cursor untouched
+        assert_eq!(row(&app, 1), "");
     }
 
     #[test]
@@ -494,9 +494,8 @@ mod tests {
         app.cursor = (10, 0);
         app.anchor_x = 10;
         type_str(&mut app, "1+2=");
-        enter(&mut app);
+        assert!(!enter(&mut app)); // tag not seen — not handled
         assert_eq!(row(&app, 0), "[Calc]1+2="); // row text collapses the gap
-        assert_eq!(app.cursor.1, 1); // fell through to a normal newline
-        assert_eq!(row(&app, 1), "");
+        assert_eq!(app.cursor, (14, 0)); // untouched
     }
 }

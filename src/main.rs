@@ -15,6 +15,7 @@
 //!   - selection   (M13)     — click-drag rectangle + copy/paste/clear
 //!   - clipboard   (M13)     — system-clipboard wrapper (arboard)
 //!   - calc        (M18)     — [Calc] tag calculator on Enter
+//!   - todo        (M20)     — [ ] checkbox list chaining on Enter
 
 mod app;
 mod calc;
@@ -28,6 +29,7 @@ mod overview;
 mod persistence;
 mod render;
 mod selection;
+mod todo;
 mod viewport;
 
 use std::fs;
@@ -479,9 +481,14 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         KeyCode::Char('s') if ctrl => save_now(app),
         KeyCode::Backspace => editing::backspace(app),
         KeyCode::Delete => editing::delete(app),
-        // Enter goes through the calculator first: on a line with a [Calc] tag
-        // it evaluates / assigns / chains, else it's a normal newline (M18).
-        KeyCode::Enter => calc::enter(app),
+        // Enter goes through the calculator first (a [Calc] tag evaluates /
+        // assigns / chains, M18), then checkbox chaining (a leading [ ] / [x]
+        // prefixes the new line with `[ ] `, M20), else a normal newline.
+        KeyCode::Enter => {
+            if !calc::enter(app) && !todo::enter(app) {
+                editing::newline(app)
+            }
+        }
         // Locations: Ctrl+1..9 jump, Ctrl+Shift+1..9 save. Needs a terminal that
         // reports Ctrl+digit modifiers (Kitty keyboard protocol — see notes).
         KeyCode::Char(c) if ctrl && locations::slot_for_digit(c).is_some() => {
