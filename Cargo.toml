@@ -1,6 +1,6 @@
 [package]
 name = "terminal_pad"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "An infinite-canvas terminal text pad (TUI)."
 license = "MIT"

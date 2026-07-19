@@ -16,8 +16,10 @@
 //!   - clipboard   (M13)     — system-clipboard wrapper (arboard)
 //!   - calc        (M18)     — [Calc] tag calculator on Enter
 //!   - todo        (M20)     — [ ] checkbox list chaining on Enter
+//!   - banner      (M21)     — Ctrl+B figlet-style big-letter typing
 
 mod app;
+mod banner;
 mod calc;
 mod canvas;
 mod clipboard;
@@ -477,15 +479,22 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         // Insert/Overwrite toggle. Ctrl+I needs a terminal that distinguishes it
         // from Tab (Kitty keyboard protocol — see notes).
         KeyCode::Char('i') if ctrl => editing::toggle_mode(app),
+        // Ctrl+B — toggle banner (figlet big-letter) typing. Plain ASCII
+        // control code (0x02), no Kitty protocol needed.
+        KeyCode::Char('b') if ctrl => banner::toggle(app),
         // Ctrl+S — save now.
         KeyCode::Char('s') if ctrl => save_now(app),
         KeyCode::Backspace => editing::backspace(app),
         KeyCode::Delete => editing::delete(app),
-        // Enter goes through the calculator first (a [Calc] tag evaluates /
-        // assigns / chains, M18), then checkbox chaining (a leading [ ] / [x]
-        // prefixes the new line with `[ ] `, M20), else a normal newline.
+        // In banner mode Enter just drops a glyph height (a split would shred
+        // the art); otherwise it goes through the calculator first (a [Calc]
+        // tag evaluates / assigns / chains, M18), then checkbox chaining (a
+        // leading [ ] / [x] prefixes the new line with `[ ] `, M20), else a
+        // normal newline.
         KeyCode::Enter => {
-            if !calc::enter(app) && !todo::enter(app) {
+            if app.banner {
+                banner::newline(app)
+            } else if !calc::enter(app) && !todo::enter(app) {
                 editing::newline(app)
             }
         }
@@ -500,12 +509,17 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
             }
         }
         // Printable input — ignore when Ctrl/Alt is held (those are commands).
+        // Banner mode stamps a figlet glyph instead of a single cell.
         KeyCode::Char(c)
             if !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
         {
-            editing::type_char(app, c)
+            if app.banner {
+                banner::type_char(app, c)
+            } else {
+                editing::type_char(app, c)
+            }
         }
         _ => {}
     }

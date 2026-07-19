@@ -20,6 +20,7 @@ const BINDINGS: &[(&str, &str)] = &[
     ("[Calc] + Enter", "calc: eval `1+2=` / assign"),
     ("[ ] / [x] + Enter", "todo: chain a new [ ] item"),
     ("Ctrl+I", "toggle Insert / Overwrite"),
+    ("Ctrl+B", "toggle banner (figlet) typing"),
     ("Ctrl+1..9 (+Shift)", "jump / save bookmark"),
     ("Ctrl+Z", "overview / minimap"),
     ("Ctrl+S", "save to file"),
@@ -36,11 +37,11 @@ pub fn rows(width: u16, height: u16) -> Vec<String> {
     let w = width as usize;
     let h = height as usize;
 
-    // Body lines: title, blank, each binding, blank, footer.
+    // Body lines: title, each binding, footer (no spacer rows — the list has
+    // grown to where the panel only just fits a 24-row terminal).
     let key_col = BINDINGS.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
     let mut body: Vec<String> = Vec::new();
     body.push(center_in(TITLE, content_width(key_col)));
-    body.push(String::new());
     for &(k, d) in BINDINGS {
         if k.is_empty() && d.is_empty() {
             body.push(String::new());
@@ -48,7 +49,6 @@ pub fn rows(width: u16, height: u16) -> Vec<String> {
             body.push(format!("{k:>key_col$}  {d}"));
         }
     }
-    body.push(String::new());
     body.push(center_in(FOOTER, content_width(key_col)));
 
     // Panel = body wrapped in a 1-char border, padded one space each side.

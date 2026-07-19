@@ -41,6 +41,8 @@ pub struct App {
     pub clip: Option<Vec<Vec<char>>>,
     /// Session-only calculator variables for `[Calc]` lines (not persisted).
     pub calc: CalcState,
+    /// Whether banner (figlet big-letter) typing is on (Ctrl+B, not persisted).
+    pub banner: bool,
 }
 
 impl App {
@@ -60,6 +62,7 @@ impl App {
             dragging: false,
             clip: None,
             calc: CalcState::default(),
+            banner: false,
         }
     }
 

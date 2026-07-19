@@ -70,9 +70,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Some(s) => format!("   sel {}x{}", s.width(), s.height()),
         None => String::new(),
     };
+    // The mode chip grows a BAN tag while banner (figlet) typing is on.
+    let mode = if app.banner {
+        format!("{}+BAN", app.mode.label())
+    } else {
+        app.mode.label().to_string()
+    };
     let status = format!(
         " {}   cursor ({}, {})   cells {}   marks [{}]{}   {}   ·   ^H help · ^C/^V copy/paste · ^S save · Esc/^Q quit ",
-        app.mode.label(),
+        mode,
         app.cursor.0,
         app.cursor.1,
         app.canvas.len(),
