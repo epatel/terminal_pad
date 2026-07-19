@@ -36,6 +36,13 @@ Ships as a single self-contained binary.
   binary work both ways — `0xFF + 1=` → `256`, `hex(1000)=` → `0x3E8`,
   `bin(0xFF)=` → `0b11111111`; errors go to the status line, never onto the
   canvas.
+- **Checklists** — **Enter** on a line starting with `[ ]` / `[x]` chains a
+  fresh `[ ] ` item on the next line (splitting mid-item carries the tail);
+  Enter on a bare `[ ] ` ends the list.
+- **Banner typing** — **Ctrl+B** toggles banner mode: each typed character is
+  stamped onto the canvas as a big FIGlet glyph (the classic `smslant` font,
+  embedded — no figlet needed) with figlet-faithful kerning/smushing; Enter
+  drops a glyph height to start the next banner line.
 - **Mouse** — click to position the cursor, **drag to select a rectangle**, and
   scroll-wheel to pan.
 - **Selection** — copy a selected block with **Ctrl+C** (to an internal buffer
@@ -116,6 +123,8 @@ contents.
 | Ctrl+K | Delete from the cursor to the line's end (stops at a ≥2-blank gap) |
 | Enter | Split the line at the cursor — trailing words move down to the line's start, pushing blocks below down |
 | Enter on a `[Calc]` line | Calculator: `expr=` inserts the result; `name = expr` assigns a session variable; otherwise chains a new `[Calc]` line |
+| Enter on a `[ ]` / `[x]` line | Chains a fresh `[ ] ` checklist item; a bare `[ ] ` ends the list |
+| Ctrl+B | Toggle banner mode — typing stamps big figlet (`smslant`) letters; Enter drops a glyph height |
 | Ctrl+1 … Ctrl+9 | Jump to bookmark 1–9 |
 | Ctrl+Shift+1 … Ctrl+Shift+9 | Save bookmark 1–9 |
 | Ctrl+Z | Toggle zoom-out overview (Shift+arrows pan ⅓ there) |
@@ -168,6 +177,8 @@ flowchart LR
   app --> viewport["viewport — scroll / pan math"]
   app --> editing["editing — typing, modes, paste"]
   app --> calc["calc — [Calc] tag calculator"]
+  app --> todo["todo — checkbox chaining"]
+  app --> banner["banner — figlet typing"]
   app --> locations["locations — bookmarks"]
   app --> overview["overview — minimap"]
   app --> layout["layout — line model + push-down"]
