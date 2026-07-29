@@ -4,6 +4,7 @@
 //! in M4), edit mode (M5), and bookmark slots (M7) all hang off `App`.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::calc::CalcState;
 use crate::canvas::{Canvas, Coord};
@@ -43,7 +44,15 @@ pub struct App {
     pub calc: CalcState,
     /// Whether banner (figlet big-letter) typing is on (Ctrl+B, not persisted).
     pub banner: bool,
+    /// When and where the last left-click landed, and how many clicks its run has
+    /// reached — used to spot double- and triple-clicks (crossterm reports
+    /// individual presses, not click counts).
+    pub last_click: Option<(Instant, (Coord, Coord), u8)>,
 }
+
+/// Longest gap between two clicks on the same cell that still counts as a
+/// double-click.
+pub const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 impl App {
     pub fn new() -> Self {
@@ -63,6 +72,7 @@ impl App {
             clip: None,
             calc: CalcState::default(),
             banner: false,
+            last_click: None,
         }
     }
 
@@ -123,6 +133,52 @@ impl App {
         self.dragging = true;
     }
 
+    /// Record a left-press at canvas cell `p` at time `now` and report the click
+    /// count in the current run: 1 (single), 2 (double), 3 (triple). Clicks chain
+    /// while they land on the same cell within `DOUBLE_CLICK` of each other; a
+    /// fourth click, a different cell, or a longer pause starts a new run at 1.
+    pub fn register_click(&mut self, now: Instant, p: (Coord, Coord)) -> u8 {
+        let n = match self.last_click {
+            Some((t, q, n)) if q == p && n < 3 && now.duration_since(t) <= DOUBLE_CLICK => n + 1,
+            _ => 1,
+        };
+        self.last_click = Some((now, p, n));
+        n
+    }
+
+    /// Select the word under the cursor's current cell (double-click), returning
+    /// its text. Nothing is copied — Ctrl+C does that, like any other selection.
+    /// `None` on a blank cell, where the cursor just stays put.
+    pub fn select_word(&mut self) -> Option<String> {
+        let (x, y) = self.cursor;
+        let (s, e) = selection::word_span(&self.canvas, x, y)?;
+        self.select_span(s, e, y)
+    }
+
+    /// Select the whole line under the cursor (triple-click): the single-space-
+    /// joined run from `layout::line_bounds`, so a side column past a ≥2-blank gap
+    /// selects on its own. Copies nothing (Ctrl+C does). `None` off any line.
+    pub fn select_line(&mut self) -> Option<String> {
+        let (x, y) = self.cursor;
+        let (s, e) = crate::layout::line_bounds(&self.canvas, x, y)?;
+        self.select_span(s, e, y)
+    }
+
+    /// Select columns `s..=e` on row `y` as a one-row selection and return its
+    /// text. The clip buffer and the system clipboard are left alone: the block
+    /// is just selected, ready for Ctrl+C.
+    fn select_span(&mut self, s: Coord, e: Coord, y: Coord) -> Option<String> {
+        let sel = Selection {
+            anchor: (s, y),
+            head: (e, y),
+        };
+        self.selection = Some(sel);
+        self.dragging = false;
+        let text = selection::to_text(&selection::extract(&self.canvas, &sel));
+        self.status = format!("selected \"{text}\" (Ctrl+C to copy)");
+        Some(text)
+    }
+
     /// Extend the active drag's far corner to the cell at `(sx, sy)`, carrying the
     /// cursor with it. No-op when no drag is in progress.
     pub fn update_drag(&mut self, sx: u16, sy: u16) {
@@ -138,8 +194,13 @@ impl App {
     }
 
     /// End the drag. A selection that never grew past one cell was really a click,
-    /// so it's dropped (leaving just the positioned cursor).
+    /// so it's dropped (leaving just the positioned cursor). Only a selection from
+    /// an actual drag is dropped — the release after a double-click must not eat a
+    /// one-char word selection.
     pub fn end_drag(&mut self) {
+        if !self.dragging {
+            return;
+        }
         self.dragging = false;
         if matches!(self.selection, Some(sel) if sel.is_point()) {
             self.selection = None;
@@ -283,6 +344,67 @@ mod tests {
         app.end_drag();
         assert!(app.selection.is_none());
         assert_eq!(app.cursor, (7, 7));
+    }
+
+    #[test]
+    fn clicks_chain_on_the_same_cell_within_the_window() {
+        let mut app = sized_app(80, 24);
+        let t0 = Instant::now();
+        let at = |app: &mut App, ms, p| app.register_click(t0 + Duration::from_millis(ms), p);
+        assert_eq!(at(&mut app, 0, (2, 1)), 1); // single
+        assert_eq!(at(&mut app, 100, (2, 1)), 2); // double
+        assert_eq!(at(&mut app, 200, (2, 1)), 3); // triple
+        assert_eq!(at(&mut app, 300, (2, 1)), 1); // a fourth click starts over
+        // Too slow, and a press on another cell, both restart the run.
+        assert_eq!(at(&mut app, 1200, (2, 1)), 1);
+        assert_eq!(at(&mut app, 1250, (5, 1)), 1);
+    }
+
+    #[test]
+    fn select_line_takes_the_whole_single_space_run() {
+        let mut app = sized_app(80, 24);
+        // "hi there" then a ≥2-blank gap then a side column.
+        for (i, ch) in "hi there  side".chars().enumerate() {
+            if ch != ' ' {
+                app.canvas.set(i as Coord, 2, ch);
+            }
+        }
+        app.cursor = (4, 2); // inside "there"
+        assert_eq!(app.select_line().as_deref(), Some("hi there"));
+        assert_eq!(app.selection.unwrap().bounds(), (0, 2, 7, 2));
+
+        app.cursor = (12, 2); // in the side column past the gap
+        assert_eq!(app.select_line().as_deref(), Some("side"));
+
+        app.cursor = (40, 2); // empty space — no line
+        assert!(app.select_line().is_none());
+    }
+
+    #[test]
+    fn select_word_selects_the_run_and_returns_its_text() {
+        let mut app = sized_app(80, 24);
+        for (i, ch) in "hi, you".chars().enumerate() {
+            app.canvas.set(i as Coord, 3, ch);
+        }
+        app.cursor = (5, 3); // inside "you"
+        assert_eq!(app.select_word().as_deref(), Some("you"));
+        assert_eq!(app.selection.unwrap().bounds(), (4, 3, 6, 3));
+        assert!(app.clip.is_none()); // selection only — Ctrl+C does the copying
+        assert!(!app.dragging);
+
+        // A blank cell selects nothing.
+        app.cursor = (20, 3);
+        assert!(app.select_word().is_none());
+    }
+
+    #[test]
+    fn release_after_double_click_keeps_a_one_char_selection() {
+        let mut app = sized_app(80, 24);
+        app.canvas.set(4, 2, 'x');
+        app.cursor = (4, 2);
+        app.select_word();
+        app.end_drag(); // the mouse-up that follows the double-click
+        assert!(app.selection.is_some());
     }
 
     #[test]

@@ -43,8 +43,13 @@ Ships as a single self-contained binary.
   stamped onto the canvas as a big FIGlet glyph (the classic `smslant` font,
   embedded — no figlet needed) with figlet-faithful kerning/smushing; Enter
   drops a glyph height to start the next banner line.
-- **Mouse** — click to position the cursor, **drag to select a rectangle**, and
-  scroll-wheel to pan.
+- **Mouse** — click to position the cursor, **drag to select a rectangle**,
+  **double-click to select the word** under the pointer (URLs, paths and
+  versions like `https://example.com/a?x=1`, `src/main.rs` or `v1.2.3-rc`
+  select whole, without a trailing sentence period),
+  **triple-click to select the whole line** (the single-space-joined run, so a
+  side column past a ≥2-blank gap selects on its own), and scroll-wheel to pan.
+  Both just select — **Ctrl+C** copies, as for any selection.
 - **Selection** — copy a selected block with **Ctrl+C** (to an internal buffer
   *and* the system clipboard), paste it with **Ctrl+V**, clear it with
   Delete/Backspace, cancel with Esc.
@@ -133,6 +138,8 @@ contents.
 | Esc / Ctrl+Q | Quit (auto-saves) |
 | Mouse click | Position the cursor |
 | Mouse drag | Select a rectangle |
+| Mouse double-click | Select the word / URL under the pointer |
+| Mouse triple-click | Select the whole line under the pointer |
 | Scroll wheel | Pan the view up / down |
 | Ctrl+C / Ctrl+V | Copy selection (+ system clipboard) / paste block |
 | Delete / Backspace | Clear the selection (when one is active) |

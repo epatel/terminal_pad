@@ -37,6 +37,7 @@ mod viewport;
 use std::fs;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crossterm::{
     event::{
@@ -345,7 +346,21 @@ fn handle_mouse(app: &mut App, m: &MouseEvent) {
     let sy = m.row.min(h - 1);
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) if m.row < h && m.column < w => {
-            app.begin_drag(sx, sy)
+            let cell = app.viewport.canvas_at(sx, sy);
+            // Double-click selects the word under the pointer, triple-click its
+            // whole line — selection only; Ctrl+C copies, like any other block.
+            match app.register_click(Instant::now(), cell) {
+                n @ (2 | 3) => {
+                    app.click_to(sx, sy);
+                    app.selection = None;
+                    if n == 2 {
+                        app.select_word();
+                    } else {
+                        app.select_line();
+                    }
+                }
+                _ => app.begin_drag(sx, sy),
+            }
         }
         MouseEventKind::Drag(MouseButton::Left) => app.update_drag(sx, sy),
         MouseEventKind::Up(MouseButton::Left) => app.end_drag(),
@@ -354,6 +369,14 @@ fn handle_mouse(app: &mut App, m: &MouseEvent) {
         MouseEventKind::ScrollRight => app.scroll_cols(-HWHEEL_STEP),
         MouseEventKind::ScrollLeft => app.scroll_cols(HWHEEL_STEP),
         _ => {}
+    }
+}
+
+/// Best-effort write of copied text to the system clipboard; a failure is
+/// appended to whatever status the copy already set (the internal clip still works).
+fn copy_to_system(app: &mut App, text: &str) {
+    if let Err(e) = clipboard::set_system(text) {
+        app.status = format!("{} (clipboard: {e})", app.status);
     }
 }
 
@@ -418,10 +441,8 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
     // the internal block; Delete/Backspace on a selection clears the block. Any
     // other key dismisses a lingering selection so the highlight doesn't stick.
     if ctrl && key.code == KeyCode::Char('c') {
-        if let Some(text) = app.copy_selection()
-            && let Err(e) = clipboard::set_system(&text)
-        {
-            app.status = format!("{} (clipboard: {e})", app.status);
+        if let Some(text) = app.copy_selection() {
+            copy_to_system(app, &text);
         }
         return;
     }

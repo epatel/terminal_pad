@@ -74,6 +74,85 @@ pub fn to_text(block: &[Vec<char>]) -> String {
         .join("\n")
 }
 
+/// Character classes used for word-boundary detection (double-click select).
+/// Blank cells and whitespace are `None` — they belong to no word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// Letters, digits and `_` — the "word" run.
+    Word,
+    /// Any other visible char (`,`, `.`, `(`, `-`, …) — punctuation runs group
+    /// with each other, so a double-click on `,` selects just the punctuation.
+    Punct,
+}
+
+/// Punctuation that joins word chars into one word *when it sits between them* —
+/// everything a URL, path, host, or version string is built from
+/// (`https://example.com/a_b?x=1&y=2`, `src/main.rs`, `v1.2.3-rc`). At an edge
+/// it is not part of the word, so a sentence's trailing `.` stays out.
+const JOINERS: &[char] = &['.', '-', ':', '/', '?', '#', '@', '%', '&', '=', '+', '~'];
+
+fn class_of(ch: char) -> Option<Class> {
+    if ch.is_whitespace() {
+        None
+    } else if ch.is_alphanumeric() || ch == '_' {
+        Some(Class::Word)
+    } else {
+        Some(Class::Punct)
+    }
+}
+
+/// Whether `ch` can sit inside a word (a word char or a joiner).
+fn inner(ch: char) -> bool {
+    class_of(ch) == Some(Class::Word) || JOINERS.contains(&ch)
+}
+
+/// Inclusive column range of the "word" under `(x, y)`, or `None` on a blank /
+/// whitespace cell.
+///
+/// A word is the maximal run of word chars (alphanumeric + `_`) and joiners
+/// (`. - : / ? # @ % & = + ~`), with joiners trimmed off both edges — so a whole
+/// URL selects as one unit while the period ending the sentence after it does
+/// not. Anything else is punctuation, and a click there selects the maximal
+/// punctuation run instead (so `hello, world` gives `hello` or `,`, and `->(`
+/// selects as one run). Clicking a joiner that trimming would drop — the final
+/// `.` of `example.com.` — falls back to that punctuation run too.
+pub fn word_span(canvas: &Canvas, x: Coord, y: Coord) -> Option<(Coord, Coord)> {
+    let ch = canvas.get(x, y)?;
+    class_of(ch)?;
+    if inner(ch) {
+        let is_inner = |c: Coord| canvas.get(c, y).is_some_and(inner);
+        let (mut s, mut e) = (x, x);
+        while is_inner(s - 1) {
+            s -= 1;
+        }
+        while is_inner(e + 1) {
+            e += 1;
+        }
+        // Trim joiners off the edges; they only count between word chars.
+        let is_word = |c: Coord| canvas.get(c, y).and_then(class_of) == Some(Class::Word);
+        while s <= e && !is_word(s) {
+            s += 1;
+        }
+        while s <= e && !is_word(e) {
+            e -= 1;
+        }
+        // A run of joiners only (`--`), or a click on a trimmed-off edge joiner,
+        // is really punctuation — fall through to the punctuation run below.
+        if s <= e && (s..=e).contains(&x) {
+            return Some((s, e));
+        }
+    }
+    let is_punct = |c: Coord| canvas.get(c, y).and_then(class_of) == Some(Class::Punct);
+    let (mut s, mut e) = (x, x);
+    while is_punct(s - 1) {
+        s -= 1;
+    }
+    while is_punct(e + 1) {
+        e += 1;
+    }
+    Some((s, e))
+}
+
 /// Erase every cell in the selection back to truly-blank.
 pub fn clear(canvas: &mut Canvas, sel: &Selection) {
     let (x0, y0, x1, y1) = sel.bounds();
@@ -127,6 +206,56 @@ mod tests {
         assert!(!sel.contains(1, 2));
         assert!(!sel.is_point());
         assert!(Selection::new((5, 5)).is_point());
+    }
+
+    fn row_canvas(s: &str) -> Canvas {
+        let mut c = Canvas::new();
+        for (i, ch) in s.chars().enumerate() {
+            if ch != ' ' {
+                c.set(i as Coord, 0, ch);
+            }
+        }
+        c
+    }
+
+    #[test]
+    fn word_span_stops_at_punctuation_and_blanks() {
+        let c = row_canvas("hello, world_9 x");
+        assert_eq!(word_span(&c, 0, 0), Some((0, 4))); // "hello"
+        assert_eq!(word_span(&c, 4, 0), Some((0, 4))); // last char of the word
+        assert_eq!(word_span(&c, 5, 0), Some((5, 5))); // the comma alone
+        assert_eq!(word_span(&c, 10, 0), Some((7, 13))); // "world_9" (digits + _)
+        assert_eq!(word_span(&c, 6, 0), None); // blank between words
+        assert_eq!(word_span(&c, 15, 0), Some((15, 15))); // one-char word
+        assert_eq!(word_span(&c, 40, 0), None); // empty canvas
+    }
+
+    #[test]
+    fn word_span_takes_a_whole_url_but_not_the_sentence_period() {
+        //                0123456789...
+        let c = row_canvas("see https://example.com/a_b?x=1&y=2. ok");
+        let url = (4, 34); // "https://…&y=2" — the sentence period at 35 stays out
+        assert_eq!(word_span(&c, 4, 0), Some(url)); // on the scheme
+        assert_eq!(word_span(&c, 11, 0), Some(url)); // on the "//"
+        assert_eq!(word_span(&c, 15, 0), Some(url)); // mid-host
+        assert_eq!(word_span(&c, 34, 0), Some(url)); // last char of the query
+        assert_eq!(word_span(&c, 35, 0), Some((35, 35))); // the trailing period alone
+    }
+
+    #[test]
+    fn word_span_keeps_paths_and_versions_together() {
+        let c = row_canvas("src/main.rs v1.2.3-rc a--b -- x");
+        assert_eq!(word_span(&c, 5, 0), Some((0, 10))); // "src/main.rs"
+        assert_eq!(word_span(&c, 14, 0), Some((12, 20))); // "v1.2.3-rc"
+        assert_eq!(word_span(&c, 23, 0), Some((22, 25))); // joiners inside: "a--b"
+        assert_eq!(word_span(&c, 27, 0), Some((27, 28))); // free-standing "--" is punctuation
+    }
+
+    #[test]
+    fn word_span_groups_punctuation_runs() {
+        let c = row_canvas("a->(b)");
+        assert_eq!(word_span(&c, 1, 0), Some((1, 3))); // "->(" as one run
+        assert_eq!(word_span(&c, 4, 0), Some((4, 4))); // "b"
     }
 
     #[test]

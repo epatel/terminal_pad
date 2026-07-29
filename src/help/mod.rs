@@ -12,6 +12,7 @@ const BINDINGS: &[(&str, &str)] = &[
     ("Opt+Left/Right", "jump word back / forward"),
     ("Ctrl+A / Ctrl+E", "line start / end, hop parts"),
     ("Click / drag", "position cursor / select rect"),
+    ("2x / 3x click", "select word / line"),
     ("Scroll wheel", "pan view up / down"),
     ("Ctrl+C / Ctrl+V", "copy / paste block"),
     ("Del / Bksp", "clear selection or a cell"),
