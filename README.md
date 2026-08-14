@@ -194,6 +194,8 @@ flowchart LR
   app --> help["help — keybinding overlay"]
   selection --> clipboard["clipboard — system clipboard"]
   render["render — draw frame"] --> app
+  editing --> width["width — display width of a char"]
+  render --> width
 ```
 
 ## Development

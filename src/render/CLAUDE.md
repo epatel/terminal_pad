@@ -8,8 +8,11 @@ Draws each frame: the visible canvas window, the terminal cursor, and a one-row 
 `draw` branches on app state: the **help** overlay (`app.help`) and the **overview** (`app.zoom == Overview`) each paint their own full-screen content and return early; otherwise the normal editor below.
 
 ## What it draws (normal editor)
-- **Canvas window** — `window_rows(canvas, viewport)` builds one `String` per screen row (each `width` chars, blanks for unwritten cells) via `viewport.canvas_at` + `canvas.get`. Pure and unit-tested.
+- **Canvas window** — `window_rows(canvas, viewport)` builds one `String` per screen row (each `width` **columns**, blanks for unwritten cells) via `viewport.canvas_at` + `canvas.get`. Pure and unit-tested.
 - **Selection highlight** — `canvas_lines` wraps `window_rows` into styled `Line`s; `style_row` splits each row into spans, reversing the runs of cells inside `app.selection`. No selection → one plain span per row.
+
+## Wide characters (M23)
+A char is not always a column: a double-width char (CJK, emoji — `crate::width::cols`) covers two. `window_rows` emits such a char and **skips the next cell**, because the glyph physically covers that column; that is what keeps every later cell on the row at its true screen position even if an edit left a stale char in the shadow column. A wide char in the *last* visible column would spill past the drawing area, so it draws as a blank. Each row therefore holds `width` columns but possibly fewer chars. `style_row` tracks a column counter (advancing by `width::cols`) instead of `chars().enumerate()`, and a wide char takes the selection state of the column it starts in. Ratatui reserves the continuation cell itself (it paints a space there), verified end-to-end against a `TestBackend` buffer.
 - **Status line** — reversed-video row: mode (INS/OVR), cursor coords, written-cell count, saved bookmark marks, a `sel WxH` indicator when a selection is active, the transient `app.status`, and a compact key hint.
 - **Cursor** — `frame.set_cursor_position` at `viewport.screen_of(cursor)`, offset by the canvas area origin; skipped when the cursor is scrolled off-screen (and in the help/overview branches).
 

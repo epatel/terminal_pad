@@ -24,7 +24,7 @@ Absolute integer cell coordinates `(x, y)` as `Coord` (= `i64`), unbounded in al
 
 ## Gotchas
 - Row-wide shifts are O(populated cells in row) — fine normally; watch a single enormous row.
-- One `char` per cell; combining/wide characters are a v1 limitation.
+- One `char` per cell — including a double-width char (CJK, emoji), which the *writers* in `editing` follow with a blank cell so it spans two canvas columns on screen (M23, see `crate::width`). The canvas itself stays width-agnostic: it stores and shifts cells, it does not know what a char looks like.
 
 ## Ownership
 Writes: editing + paste handlers (M5/M6). Reads: render (visible window) (M3). This module owns the cell-storage contract only — cursor, scrolling, and bookmarks are separate features.

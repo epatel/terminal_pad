@@ -33,14 +33,35 @@ impl EditMode {
     }
 }
 
-/// Write a printable char at the cursor and advance one column. Insert shifts the
+/// Write a printable char at the cursor and advance past it. Insert shifts the
 /// row's trailing cells right; Overwrite replaces in place.
+///
+/// A double-width char (CJK, emoji) covers two terminal columns, so it takes two
+/// canvas columns too — the char in the first, blank in the second — and the
+/// cursor advances by two. That keeps the canvas column == screen column
+/// invariant the cursor, mouse, and selection all depend on. See `crate::width`.
 pub fn type_char(app: &mut App, ch: char) {
+    let (cx, cy) = app.cursor;
+    let cols = crate::width::cols(ch);
     match app.mode {
-        EditMode::Insert => app.canvas.insert_shift(app.cursor.0, app.cursor.1, ch),
-        EditMode::Overwrite => app.canvas.set(app.cursor.0, app.cursor.1, ch),
+        EditMode::Insert => {
+            app.canvas.insert_shift(cx, cy, ch);
+            if cols == 2 {
+                // Push the tail one further and leave the shadow column blank:
+                // insert a filler at cx+1, then erase it back to truly-blank.
+                app.canvas.insert_shift(cx + 1, cy, ' ');
+                app.canvas.clear(cx + 1, cy);
+            }
+        }
+        EditMode::Overwrite => {
+            app.canvas.set(cx, cy, ch);
+            if cols == 2 {
+                // The glyph covers cx+1 on screen; erase what it would hide.
+                app.canvas.clear(cx + 1, cy);
+            }
+        }
     }
-    app.cursor.0 += 1;
+    app.cursor.0 += cols;
     app.viewport.scroll_to_show(app.cursor);
 }
 
@@ -267,7 +288,14 @@ pub fn paste(app: &mut App, text: &str) {
         let mut x = cx;
         for ch in line.chars() {
             app.canvas.set(x, y, ch);
-            x += 1;
+            // A double-width char takes two canvas columns so the block stays
+            // column-aligned on screen; its second column is left truly-blank
+            // (cleared, since block placement overwrites what it covers).
+            let cols = crate::width::cols(ch);
+            if cols == 2 {
+                app.canvas.clear(x + 1, y);
+            }
+            x += cols;
         }
         last_line_len = x - cx;
         line_count = i as crate::canvas::Coord + 1;
@@ -322,6 +350,45 @@ mod tests {
         app.cursor = (1, 0); // between a and c
         type_char(&mut app, 'b');
         assert_eq!(row(&app, 0), "abc");
+        assert_eq!(app.cursor, (2, 0));
+    }
+
+    #[test]
+    fn wide_char_takes_two_columns_in_insert_mode() {
+        let mut app = App::new();
+        type_str(&mut app, "日本");
+        // Each glyph owns two columns: chars at 0 and 2, shadows at 1 and 3 blank.
+        assert_eq!(app.canvas.get(0, 0), Some('日'));
+        assert_eq!(app.canvas.get(1, 0), None);
+        assert_eq!(app.canvas.get(2, 0), Some('本'));
+        assert_eq!(app.canvas.get(3, 0), None);
+        assert_eq!(app.canvas.len(), 2);
+        assert_eq!(app.cursor, (4, 0));
+    }
+
+    #[test]
+    fn wide_char_in_insert_pushes_the_tail_two_columns() {
+        let mut app = App::new();
+        type_str(&mut app, "ab");
+        app.cursor = (1, 0); // between a and b
+        type_char(&mut app, '日');
+        assert_eq!(app.canvas.get(0, 0), Some('a'));
+        assert_eq!(app.canvas.get(1, 0), Some('日'));
+        assert_eq!(app.canvas.get(2, 0), None); // shadow column stays blank
+        assert_eq!(app.canvas.get(3, 0), Some('b')); // pushed by two, not one
+        assert_eq!(app.cursor, (3, 0));
+    }
+
+    #[test]
+    fn wide_char_in_overwrite_erases_the_cell_it_covers() {
+        let mut app = App::new();
+        type_str(&mut app, "abc");
+        app.cursor = (0, 0);
+        app.mode = EditMode::Overwrite;
+        type_char(&mut app, '日'); // covers columns 0 and 1, so 'b' must go
+        assert_eq!(app.canvas.get(0, 0), Some('日'));
+        assert_eq!(app.canvas.get(1, 0), None);
+        assert_eq!(app.canvas.get(2, 0), Some('c'));
         assert_eq!(app.cursor, (2, 0));
     }
 
@@ -674,6 +741,43 @@ mod tests {
         paste(&mut app, "abc");
         assert_eq!(row(&app, 1), "abc"); // at x = 2,3,4
         assert_eq!(app.cursor, (5, 1)); // end of the line
+    }
+
+    #[test]
+    fn paste_lays_wide_chars_two_columns_apart() {
+        let mut app = App::new();
+        paste(&mut app, "日本語");
+        for (i, ch) in "日本語".chars().enumerate() {
+            let x = (i as Coord) * 2;
+            assert_eq!(app.canvas.get(x, 0), Some(ch));
+            assert_eq!(app.canvas.get(x + 1, 0), None, "shadow column {}", x + 1);
+        }
+        assert_eq!(app.canvas.len(), 3);
+        assert_eq!(app.cursor, (6, 0)); // three glyphs, six columns
+    }
+
+    #[test]
+    fn paste_wide_char_clears_the_cell_it_covers() {
+        let mut app = App::new();
+        type_str(&mut app, "abc");
+        app.cursor = (0, 0);
+        // Block placement overwrites what it covers — including the column
+        // hidden under a wide glyph, which would otherwise be a stale 'b'.
+        paste(&mut app, "日");
+        assert_eq!(app.canvas.get(0, 0), Some('日'));
+        assert_eq!(app.canvas.get(1, 0), None);
+        assert_eq!(app.canvas.get(2, 0), Some('c'));
+    }
+
+    #[test]
+    fn paste_mixed_width_line_stays_column_aligned() {
+        let mut app = App::new();
+        paste(&mut app, "a日b");
+        assert_eq!(app.canvas.get(0, 0), Some('a'));
+        assert_eq!(app.canvas.get(1, 0), Some('日')); // columns 1 and 2
+        assert_eq!(app.canvas.get(2, 0), None);
+        assert_eq!(app.canvas.get(3, 0), Some('b'));
+        assert_eq!(app.cursor, (4, 0));
     }
 
     #[test]

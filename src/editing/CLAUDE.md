@@ -8,7 +8,7 @@ Cursor writes, the Insert/Overwrite mode, and how typed text lands on the canvas
 - `anchor_x: Coord` — column a later Enter returns to; reset by navigation (`App::move_cursor`), not by typing.
 
 ## Operations (`editing::*`, act on `&mut App`)
-- `type_char(app, ch)` — Insert: `canvas.insert_shift` then `cursor.x += 1`; Overwrite: `canvas.set` then `cursor.x += 1`.
+- `type_char(app, ch)` — Insert: `canvas.insert_shift` then `cursor.x += cols`; Overwrite: `canvas.set` then `cursor.x += cols`, where `cols` is the char's display width (see **Wide characters** below).
 - `backspace(app)` — `cursor.x -= 1`, then delete at cursor (reflow in Insert, gap in Overwrite).
 - `delete(app)` — delete the cell under the cursor (reflow in Insert, gap in Overwrite); cursor stays.
 - `newline(app)` — **split the line at the cursor** (Enter). The trailing run (words joined by single spaces, up to the first ≥2-blank gap) moves down one row, left-aligned to the line's start column, pushing the block(s) below down to make room (`layout::make_room`, see `src/layout/`). Cursor at/after the line end just drops to the line start on the next row; a blank row falls back to `anchor_x`.
@@ -29,9 +29,17 @@ Key dispatch lives in `main::handle_key`; printable input is ignored when Ctrl/A
 ## Decisions / open items
 - **Enter splits the line** (M15) — the trailing single-space-joined run moves down to the line's *content-derived* start column, pushing blocks below down (`layout::make_room`). Supersedes the earlier anchor-only newline. `anchor_x` is still the fallback for a blank row / end-of-line drop, because navigation resets it and can't be trusted as the line start.
 - **Paste = block placement** (overwrite, no push-down) — resolves plan open question #3. Revisit if push-down/insert-at-cursor is wanted.
-- One `char` per cell; combining/wide characters and embedded control chars (other than stripped `\r`) are a v1 limitation.
+- One `char` per cell; combining chars and embedded control chars (other than stripped `\r`) are a v1 limitation — they take a cell of their own so the column invariant holds, but render oddly.
 - **Ctrl+I = Tab** historically (ASCII 0x09); it only toggles mode in terminals that distinguish them via the Kitty keyboard protocol (enabled in `main::setup_terminal`). In plain Terminal.app, Ctrl+I arrives as Tab and won't toggle.
 - **Option/Alt+Left/Right word jump** needs the terminal to report the Alt modifier on arrow keys (Kitty keyboard protocol). Some macOS terminals instead send `ESC b`/`ESC f` for Option+arrow unless "Use Option as Meta" / kitty protocol is on; there it won't word-jump. Same caveat family as Ctrl+I / Ctrl+digit.
+
+## Wide characters (M23)
+A double-width char (CJK, emoji) covers two terminal columns, so the **writers** here give it two canvas columns — the char in the first, truly-blank in the second — and advance the cursor by two. That preserves the app's core invariant (canvas column == screen column) that the cursor, `App::click_to`, and selection rectangles all rely on; `crate::width::cols` is the single source of truth, and `render` skips the shadow cell when painting.
+
+- `type_char` — Insert mode pushes the row's tail by **two** for a wide char (an `insert_shift` of a filler at `cx+1`, immediately cleared back to blank); Overwrite mode clears `cx+1`, since the glyph hides whatever was there.
+- `paste` — advances `x` by the char's width per char and clears the shadow column, keeping block placement's "overwrites what it covers" contract honest for a glyph that covers two columns.
+
+Editing *around* a wide char is deliberately not width-aware: Backspace/Delete/Ctrl+D act on single cells, so they can leave a wide char with a stray blank beside it, and the cursor can sit in a glyph's shadow column. Both are visually imperfect but never corrupt alignment or lose content — the two-cell-model alternative (continuation markers, cursor skipping) was weighed and rejected as a much larger ripple.
 
 ## Ownership
 Owns `mode`, `anchor_x`, and the typing/deletion logic. Writes canvas cells via the model; reads/writes `cursor`; calls `viewport.scroll_to_show` after edits.

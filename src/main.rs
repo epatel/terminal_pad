@@ -33,6 +33,7 @@ mod render;
 mod selection;
 mod todo;
 mod viewport;
+mod width;
 
 use std::fs;
 use std::io::{self, Stdout};
