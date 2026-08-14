@@ -270,7 +270,11 @@ changing `dist-workspace.toml` to regenerate the workflow.
 
 ## Limitations (v1)
 
-- One Unicode scalar per cell: single-width text (Latin, Cyrillic, Greek, …)
-  works; **wide glyphs (CJK) and multi-codepoint emoji** (ZWJ sequences, flags,
-  skin-tone modifiers, combining marks) misalign or split.
+- One Unicode scalar per cell. Single-width text (Latin, Cyrillic, Greek, …)
+  works, and a **double-width scalar** (CJK, a single-scalar emoji like 🦀)
+  takes two canvas columns so the grid stays aligned. Still unsupported:
+  **multi-codepoint grapheme clusters** — ZWJ sequences, flags, skin-tone
+  modifiers, combining marks — which split across cells, one scalar each.
+  Editing around a wide char is also not width-aware: Backspace/Delete/Ctrl+D
+  act on single cells, so they can leave a stray blank beside a wide glyph.
 - No undo/redo yet.
