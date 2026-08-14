@@ -27,11 +27,7 @@ pub fn enter(app: &mut App) -> bool {
         return false;
     }
     crate::editing::newline(app);
-    for ch in PREFIX.chars() {
-        app.canvas.insert_shift(app.cursor.0, app.cursor.1, ch);
-        app.cursor.0 += 1;
-    }
-    app.viewport.scroll_to_show(app.cursor);
+    crate::editing::insert_str(app, PREFIX);
     true
 }
 

@@ -34,7 +34,7 @@ impl EditMode {
 }
 
 /// Write a printable char at the cursor and advance past it. Insert shifts the
-/// row's trailing cells right; Overwrite replaces in place.
+/// rest of the char's *line* right; Overwrite replaces in place.
 ///
 /// A double-width char (CJK, emoji) covers two terminal columns, so it takes two
 /// canvas columns too — the char in the first, blank in the second — and the
@@ -44,15 +44,7 @@ pub fn type_char(app: &mut App, ch: char) {
     let (cx, cy) = app.cursor;
     let cols = crate::width::cols(ch);
     match app.mode {
-        EditMode::Insert => {
-            app.canvas.insert_shift(cx, cy, ch);
-            if cols == 2 {
-                // Push the tail one further and leave the shadow column blank:
-                // insert a filler at cx+1, then erase it back to truly-blank.
-                app.canvas.insert_shift(cx + 1, cy, ' ');
-                app.canvas.clear(cx + 1, cy);
-            }
-        }
+        EditMode::Insert => insert_write(&mut app.canvas, cx, cy, ch, cols),
         EditMode::Overwrite => {
             app.canvas.set(cx, cy, ch);
             if cols == 2 {
@@ -62,6 +54,32 @@ pub fn type_char(app: &mut App, ch: char) {
         }
     }
     app.cursor.0 += cols;
+    app.viewport.scroll_to_show(app.cursor);
+}
+
+/// Insert-mode write of one char: push the rest of *its line* right by the
+/// char's width — a ≥2-blank gap ends the line, so a side column past it stays
+/// put — then drop the char into the opened space.
+fn insert_write(canvas: &mut Canvas, cx: Coord, cy: Coord, ch: char, cols: Coord) {
+    crate::layout::open_columns(canvas, cx, cy, cols);
+    canvas.set(cx, cy, ch);
+    if cols == 2 {
+        // Typing into blank space opens nothing, so the column the glyph covers
+        // may still hold a char — hidden either way, so erase it.
+        canvas.clear(cx + 1, cy);
+    }
+}
+
+/// Insert `s` at the cursor, shifting each char's line right like insert-mode
+/// typing *regardless* of the current edit mode, and advance past it. Used for
+/// the chained-line prefixes in `calc` and `todo`.
+pub(crate) fn insert_str(app: &mut App, s: &str) {
+    for ch in s.chars() {
+        let (cx, cy) = app.cursor;
+        let cols = crate::width::cols(ch);
+        insert_write(&mut app.canvas, cx, cy, ch, cols);
+        app.cursor.0 += cols;
+    }
     app.viewport.scroll_to_show(app.cursor);
 }
 
@@ -123,20 +141,28 @@ pub fn newline(app: &mut App) {
 /// unlike insert-mode Delete whose row reflow pulls everything on the row.
 /// No-op off a line or at/past its end (nothing under the cursor to delete).
 pub fn delete_pull(app: &mut App) {
-    let (cx, cy) = app.cursor;
-    let Some((_, e)) = crate::layout::line_bounds(&app.canvas, cx, cy) else {
-        return;
+    pull_line_left(&mut app.canvas, app.cursor.0, app.cursor.1);
+}
+
+/// Delete `(cx, cy)` and pull the rest of *its line* left by one. A ≥2-blank gap
+/// ends the line, so a side column past it is never dragged left. Returns false
+/// (touching nothing) when the cursor is not on a line, or sits at/past its end
+/// — there is no char there to delete and nothing to its right to pull.
+fn pull_line_left(canvas: &mut Canvas, cx: Coord, cy: Coord) -> bool {
+    let Some((_, e)) = crate::layout::line_bounds(canvas, cx, cy) else {
+        return false;
     };
     if cx > e {
-        return;
+        return false;
     }
     for x in cx..e {
-        match app.canvas.get(x + 1, cy) {
-            Some(c) => app.canvas.set(x, cy, c),
-            None => app.canvas.clear(x, cy),
+        match canvas.get(x + 1, cy) {
+            Some(c) => canvas.set(x, cy, c),
+            None => canvas.clear(x, cy),
         }
     }
-    app.canvas.clear(e, cy);
+    canvas.clear(e, cy);
+    true
 }
 
 /// Delete from the cursor to the end of its line (Ctrl+K). Segment-aware: only
@@ -309,9 +335,17 @@ pub fn paste(app: &mut App, text: &str) {
 /// Insert mode reflows the row (pull trailing cells left); Overwrite just erases
 /// the cell, leaving a gap.
 fn delete_at_cursor(app: &mut App) {
+    let (cx, cy) = app.cursor;
     match app.mode {
-        EditMode::Insert => app.canvas.delete_shift(app.cursor.0, app.cursor.1),
-        EditMode::Overwrite => app.canvas.clear(app.cursor.0, app.cursor.1),
+        // Insert reflows the line, mirroring insert-mode typing: the pull stops
+        // at a ≥2-blank gap, so a side column keeps its columns. Off a line
+        // there is nothing to reflow — just erase the cell.
+        EditMode::Insert => {
+            if !pull_line_left(&mut app.canvas, cx, cy) {
+                app.canvas.clear(cx, cy);
+            }
+        }
+        EditMode::Overwrite => app.canvas.clear(cx, cy),
     }
 }
 
@@ -351,6 +385,107 @@ mod tests {
         type_char(&mut app, 'b');
         assert_eq!(row(&app, 0), "abc");
         assert_eq!(app.cursor, (2, 0));
+    }
+
+    /// A line plus a side column past a ≥2-blank gap — the layout the gap rule
+    /// exists to protect.
+    fn two_columns() -> App {
+        let mut app = App::new();
+        for (x, s) in [(0, "hello world"), (20, "NOTES")] {
+            for (i, c) in s.chars().enumerate() {
+                app.canvas.set(x + i as Coord, 0, c);
+            }
+        }
+        app
+    }
+
+    fn strip(app: &App, y: Coord) -> String {
+        (0..30)
+            .map(|x| app.canvas.get(x, y).unwrap_or('.'))
+            .collect()
+    }
+
+    #[test]
+    fn insert_typing_does_not_push_the_side_column() {
+        let mut app = two_columns();
+        app.cursor = (0, 0);
+        type_char(&mut app, 'X');
+        assert_eq!(strip(&app, 0), "Xhello world........NOTES.....");
+        assert_eq!(app.canvas.get(20, 0), Some('N')); // side column held its columns
+    }
+
+    #[test]
+    fn insert_typing_mid_line_does_not_push_the_side_column() {
+        let mut app = two_columns();
+        app.cursor = (6, 0);
+        type_char(&mut app, 'X');
+        assert_eq!(strip(&app, 0), "hello Xworld........NOTES.....");
+    }
+
+    #[test]
+    fn delete_does_not_pull_the_side_column_left() {
+        let mut app = two_columns();
+        app.cursor = (0, 0);
+        delete(&mut app); // Insert mode reflows the line, not the whole row
+        assert_eq!(strip(&app, 0), "ello world..........NOTES.....");
+    }
+
+    #[test]
+    fn backspace_does_not_pull_the_side_column_left() {
+        let mut app = two_columns();
+        app.cursor = (1, 0);
+        backspace(&mut app);
+        assert_eq!(strip(&app, 0), "ello world..........NOTES.....");
+        assert_eq!(app.cursor, (0, 0));
+    }
+
+    #[test]
+    fn ctrl_d_does_not_pull_the_side_column_left() {
+        let mut app = two_columns();
+        app.cursor = (0, 0);
+        delete_pull(&mut app);
+        assert_eq!(strip(&app, 0), "ello world..........NOTES.....");
+    }
+
+    #[test]
+    fn delete_and_ctrl_d_reflow_a_side_column_on_its_own() {
+        // Editing *inside* the side column pulls only that column.
+        let mut app = two_columns();
+        app.cursor = (20, 0);
+        delete(&mut app);
+        assert_eq!(strip(&app, 0), "hello world.........OTES......");
+        let mut app = two_columns();
+        app.cursor = (20, 0);
+        delete_pull(&mut app);
+        assert_eq!(strip(&app, 0), "hello world.........OTES......");
+    }
+
+    #[test]
+    fn delete_off_a_line_still_erases_the_cell() {
+        // A lone char in blank space has no line to reflow; Delete must still
+        // remove it rather than no-op.
+        let mut app = App::new();
+        app.canvas.set(5, 0, 'q');
+        app.cursor = (5, 0);
+        delete(&mut app);
+        assert_eq!(app.canvas.get(5, 0), None);
+    }
+
+    #[test]
+    fn insert_cascades_instead_of_merging_two_columns() {
+        let mut app = two_columns();
+        // Seven inserts shrink the 9-blank gap to the minimum 2 without moving
+        // the side column; the eighth would merge the two, so it pushes instead.
+        for _ in 0..7 {
+            app.cursor = (0, 0);
+            type_char(&mut app, 'z');
+        }
+        assert_eq!(app.canvas.get(20, 0), Some('N'));
+        app.cursor = (0, 0);
+        type_char(&mut app, 'z');
+        assert_eq!(app.canvas.get(21, 0), Some('N'));
+        // Still two distinct lines, never one merged run.
+        assert_eq!(strip(&app, 0), "zzzzzzzzhello world..NOTES....");
     }
 
     #[test]

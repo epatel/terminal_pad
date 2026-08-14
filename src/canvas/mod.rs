@@ -43,43 +43,6 @@ impl Canvas {
         self.cells.len()
     }
 
-    /// Insert-mode write: place `ch` at `(x, y)`, shifting that row's existing
-    /// cells at `x' >= x` one column right. Other rows are untouched.
-    pub fn insert_shift(&mut self, x: Coord, y: Coord, ch: char) {
-        // Collect the tail of the row, drop it, then re-place each cell one right.
-        let tail: Vec<(Coord, char)> = self
-            .cells
-            .iter()
-            .filter(|&(&(cx, cy), _)| cy == y && cx >= x)
-            .map(|(&(cx, _), &c)| (cx, c))
-            .collect();
-        for &(cx, _) in &tail {
-            self.cells.remove(&(cx, y));
-        }
-        for (cx, c) in tail {
-            self.cells.insert((cx + 1, y), c);
-        }
-        self.cells.insert((x, y), ch);
-    }
-
-    /// Delete `(x, y)`, shifting that row's cells at `x' > x` one column left.
-    /// Other rows are untouched.
-    pub fn delete_shift(&mut self, x: Coord, y: Coord) {
-        self.cells.remove(&(x, y));
-        let tail: Vec<(Coord, char)> = self
-            .cells
-            .iter()
-            .filter(|&(&(cx, cy), _)| cy == y && cx > x)
-            .map(|(&(cx, _), &c)| (cx, c))
-            .collect();
-        for &(cx, _) in &tail {
-            self.cells.remove(&(cx, y));
-        }
-        for (cx, c) in tail {
-            self.cells.insert((cx - 1, y), c);
-        }
-    }
-
     /// All written cells, sorted by `(y, x)` for deterministic output. Used by
     /// persistence and by tests reconstructing rows.
     pub fn cells(&self) -> Vec<(Coord, Coord, char)> {
@@ -136,58 +99,5 @@ mod tests {
             c.cells(),
             vec![(0, 0, 'a'), (1, 0, 'b'), (2, 0, 'c'), (0, 1, 'z')]
         );
-    }
-
-    #[test]
-    fn insert_shift_pushes_tail_right() {
-        let mut c = Canvas::new();
-        for (i, ch) in "abc".chars().enumerate() {
-            c.set(i as Coord, 0, ch);
-        }
-        c.insert_shift(1, 0, 'X'); // a[X]bc
-        assert_eq!(row_string(&c, 0), "aXbc");
-        assert_eq!(c.get(0, 0), Some('a'));
-        assert_eq!(c.get(1, 0), Some('X'));
-        assert_eq!(c.get(2, 0), Some('b'));
-        assert_eq!(c.get(3, 0), Some('c'));
-        assert_eq!(c.len(), 4);
-    }
-
-    #[test]
-    fn insert_shift_into_gap_does_not_invent_cells() {
-        let mut c = Canvas::new();
-        c.set(0, 0, 'a');
-        c.set(5, 0, 'b');
-        c.insert_shift(2, 0, 'X'); // gap between a and b
-        // a at 0, X at 2, b shifted 5 -> 6; columns 1,3,4,5 stay blank.
-        assert_eq!(c.get(0, 0), Some('a'));
-        assert_eq!(c.get(2, 0), Some('X'));
-        assert_eq!(c.get(6, 0), Some('b'));
-        assert_eq!(c.get(1, 0), None);
-        assert_eq!(c.get(5, 0), None);
-        assert_eq!(c.len(), 3);
-    }
-
-    #[test]
-    fn delete_shift_pulls_tail_left() {
-        let mut c = Canvas::new();
-        for (i, ch) in "aXbc".chars().enumerate() {
-            c.set(i as Coord, 0, ch);
-        }
-        c.delete_shift(1, 0); // remove X -> abc
-        assert_eq!(row_string(&c, 0), "abc");
-        assert_eq!(c.len(), 3);
-    }
-
-    #[test]
-    fn delete_shift_on_blank_still_pulls_tail() {
-        let mut c = Canvas::new();
-        c.set(0, 0, 'a');
-        c.set(2, 0, 'b'); // column 1 blank
-        c.delete_shift(1, 0); // delete blank, pull b from 2 -> 1
-        assert_eq!(c.get(0, 0), Some('a'));
-        assert_eq!(c.get(1, 0), Some('b'));
-        assert_eq!(c.get(2, 0), None);
-        assert_eq!(c.len(), 2);
     }
 }

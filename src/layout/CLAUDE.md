@@ -31,6 +31,20 @@ Triggered when working on Enter/`newline`, line detection, or block push-down.
   `editing::{line_start,line_end}` to hop to a neighboring part) and private
   `filled_columns`, `overlaps`, `displaced`.
 
+- `open_columns(canvas: &mut Canvas, x, y, n)` — **the horizontal analogue of
+  `make_room`** (M24): open `n` blank columns at `(x, y)` by shifting cells
+  **right**. Only the line under `x` moves — a ≥2-blank gap ends it, so a side
+  column past that gap is not dragged along by insert-mode typing. When the
+  shift would squeeze the gap to the next line below two blanks, that line moves
+  too and the push **cascades**, so side-by-side columns keep their separation
+  instead of merging into one line. No-op when `x` sits in blank space or one
+  past a line's end (nothing on its line lies to the right). Whitespace cells
+  move with the shift — they are stored cells — while only *filled* columns
+  define the boundaries. Used by `editing::insert_write` (typing, `n` = the
+  char's display width) and so by `calc`/`todo` prefixes via `insert_str`.
+  The mirror-image left shift is `editing::pull_line_left` (Delete/Backspace/
+  Ctrl+D); pulling only widens a gap, so it never cascades.
+
 ## How Enter uses it (`editing::newline`)
 `line_bounds(cursor)` → if the cursor is mid-line (`cx <= end`): capture the
 trailing run `cx..=end`, `make_room` on `cy+1` for the band `(start, start+(end-cx))`,
@@ -40,6 +54,9 @@ the line end it just drops the cursor to `(start, cy+1)`; on a blank row it fall
 back to the saved `anchor_x`.
 
 ## Invariants
+- `open_columns` only ever moves cells **right** and never overwrites: it shifts
+  a whole line (plus any cascaded neighbours) into free space, so no content is
+  lost and two lines never merge as a result of a shift.
 - `line_bounds` is pure; `make_room` only ever moves cells **down** and never
   overwrites (it shifts whole lines into free space), so no content is lost.
 - Lines move as whole units; only segments that overlap the band (directly or via
@@ -47,7 +64,9 @@ back to the saved `anchor_x`.
   is the source row above.
 
 ## Status
-Implemented (M15) with unit tests (`line_bounds` single-space merge / ≥2-gap split
+M24 added `open_columns` (7 unit tests: line-only shift, shift-from-cursor,
+no-op off a line, cascade vs. merge, gap absorbs the shift, `n = 2` for a wide
+char, stored spaces carried). Implemented (M15) with unit tests (`line_bounds` single-space merge / ≥2-gap split
 / end+1 / blank row; `make_room` no-op / single shift / cascade / single-blank
 separator carried / ≥2-blank-row stop / blank-target seed / whole-wide-line /
 cascaded-wide-lines / side-column-untouched). 2026-07-02: single blank separator

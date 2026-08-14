@@ -8,11 +8,12 @@ Cursor writes, the Insert/Overwrite mode, and how typed text lands on the canvas
 - `anchor_x: Coord` — column a later Enter returns to; reset by navigation (`App::move_cursor`), not by typing.
 
 ## Operations (`editing::*`, act on `&mut App`)
-- `type_char(app, ch)` — Insert: `canvas.insert_shift` then `cursor.x += cols`; Overwrite: `canvas.set` then `cursor.x += cols`, where `cols` is the char's display width (see **Wide characters** below).
-- `backspace(app)` — `cursor.x -= 1`, then delete at cursor (reflow in Insert, gap in Overwrite).
-- `delete(app)` — delete the cell under the cursor (reflow in Insert, gap in Overwrite); cursor stays.
+- `type_char(app, ch)` — Insert: `insert_write` (`layout::open_columns` then `canvas.set`); Overwrite: `canvas.set`. Both advance `cursor.x` by `cols`, the char's display width (see **Wide characters** below).
+- `backspace(app)` — `cursor.x -= 1`, then delete at cursor (line reflow in Insert, gap in Overwrite).
+- `delete(app)` — delete the cell under the cursor (line reflow in Insert, gap in Overwrite); cursor stays. The Insert reflow is `pull_line_left`, the same segment-aware pull as Ctrl+D; off a line it just erases the cell.
+- `insert_str(app, s)` — insert-mode write of a whole string regardless of the current mode, advancing past it. Used by `calc` and `todo` for their chained-line prefixes, so those go through the same line-aware shift as typing.
 - `newline(app)` — **split the line at the cursor** (Enter). The trailing run (words joined by single spaces, up to the first ≥2-blank gap) moves down one row, left-aligned to the line's start column, pushing the block(s) below down to make room (`layout::make_room`, see `src/layout/`). Cursor at/after the line end just drops to the line start on the next row; a blank row falls back to `anchor_x`.
-- `delete_pull(app)` — **Ctrl+D** delete the cell under the cursor and pull the rest of *its line* left by one. Segment-aware (per `layout::line_bounds`): the pull stops at the segment end, so a side column past a ≥2-blank gap stays put — unlike insert-mode Delete's whole-row reflow. No-op off a line or at/past its end. Cursor stays.
+- `delete_pull(app)` — **Ctrl+D** delete the cell under the cursor and pull the rest of *its line* left by one. Segment-aware (per `layout::line_bounds`): the pull stops at the segment end, so a side column past a ≥2-blank gap stays put. Shares `pull_line_left` with insert-mode Delete/Backspace (M24 — they used to reflow the whole row). No-op off a line or at/past its end. Cursor stays.
 - `kill_to_end(app)` — **Ctrl+K** clear from the cursor to the end of its line (segment-aware; content past a ≥2-blank gap survives). Cursor stays; no-op off a line or at/past its end. Both are plain ASCII control codes (0x04/0x0B) — no Kitty protocol needed.
 - `line_start(app)` / `line_end(app)` — **Ctrl+A / Ctrl+E** jump the cursor to the start / one-past-the-end (typing position) of the line under it, per `layout::line_bounds` — so in a side column past a ≥2-blank gap they stay within that segment. Already at that edge, or off any line (empty space, blank stretch, past end+1): they **hop to the neighboring part** on the row — Ctrl+E to the next part's start on the right, Ctrl+A to the previous part's end on the left (via `layout::segments_on_row`) — so alternating them walks the row's parts. No-op only when nothing lies in that direction (or the row is blank). Plain ASCII control codes (0x01/0x05) — work in any terminal, no Kitty protocol needed. No canvas change; resets `anchor_x` like other navigation.
 - `word_left(app)` / `word_right(app)` — **Option/Alt+Left/Right** jump the cursor by a word on its row. A word is a maximal run of non-whitespace cells (a typed space is a stored cell, so whitespace — not just an absent cell — separates words). `word_right` from inside a word lands on the next word's start, and past the last word lands one column after the final word char (end-of-content); `word_left` lands on the current word's start, then earlier word starts. No canvas change; resets `anchor_x` like other navigation.
@@ -33,10 +34,19 @@ Key dispatch lives in `main::handle_key`; printable input is ignored when Ctrl/A
 - **Ctrl+I = Tab** historically (ASCII 0x09); it only toggles mode in terminals that distinguish them via the Kitty keyboard protocol (enabled in `main::setup_terminal`). In plain Terminal.app, Ctrl+I arrives as Tab and won't toggle.
 - **Option/Alt+Left/Right word jump** needs the terminal to report the Alt modifier on arrow keys (Kitty keyboard protocol). Some macOS terminals instead send `ESC b`/`ESC f` for Option+arrow unless "Use Option as Meta" / kitty protocol is on; there it won't word-jump. Same caveat family as Ctrl+I / Ctrl+digit.
 
+## Line-aware shifting (M24)
+Insert-mode typing and its inverse (Delete/Backspace) shift only the **line** under the cursor, where a ≥2-blank gap ends a line. They used to call row-wide canvas primitives that moved *every* cell on the row, so typing in a left-hand column pushed a side column right and Delete dragged it left — the two-column layout the gap rule exists to protect was destroyed by ordinary editing.
+
+- Right shift → `layout::open_columns` (the horizontal analogue of `make_room`). When the shift would squeeze the gap to the next line below two blanks, that line is pushed along and the push **cascades**, so columns keep their separation instead of merging into one line. A cursor in blank space, or one past a line's end, pushes nothing.
+- Left shift → `pull_line_left`, shared by Delete/Backspace (Insert mode) and Ctrl+D. Pulling only ever *widens* a gap, so it never cascades.
+- Ctrl+K and Enter were already line-aware; `calc`/`todo` prefixes go through `insert_str`, so every write path now shares the rule.
+
+Known adjacent behavior, unchanged: *appending* at a line's end shifts nothing, so a growing line can still walk into its neighbor's gap and merge with it. Only shifting cascades.
+
 ## Wide characters (M23)
 A double-width char (CJK, emoji) covers two terminal columns, so the **writers** here give it two canvas columns — the char in the first, truly-blank in the second — and advance the cursor by two. That preserves the app's core invariant (canvas column == screen column) that the cursor, `App::click_to`, and selection rectangles all rely on; `crate::width::cols` is the single source of truth, and `render` skips the shadow cell when painting.
 
-- `type_char` — Insert mode pushes the row's tail by **two** for a wide char (an `insert_shift` of a filler at `cx+1`, immediately cleared back to blank); Overwrite mode clears `cx+1`, since the glyph hides whatever was there.
+- `type_char` — Insert mode opens **two** columns for a wide char (`layout::open_columns(.., 2)`); Overwrite mode clears `cx+1`, since the glyph hides whatever was there.
 - `paste` — advances `x` by the char's width per char and clears the shadow column, keeping block placement's "overwrites what it covers" contract honest for a glyph that covers two columns.
 
 Editing *around* a wide char is deliberately not width-aware: Backspace/Delete/Ctrl+D act on single cells, so they can leave a wide char with a stray blank beside it, and the cursor can sit in a glyph's shadow column. Both are visually imperfect but never corrupt alignment or lose content — the two-cell-model alternative (continuation markers, cursor skipping) was weighed and rejected as a much larger ripple.

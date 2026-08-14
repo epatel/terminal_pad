@@ -266,14 +266,10 @@ fn format_value(v: &Value) -> String {
     }
 }
 
-/// Insert `s` at the cursor (shifting the row's trailing cells right, like
+/// Insert `s` at the cursor (shifting the rest of its line right, like
 /// insert-mode typing regardless of the current edit mode) and advance past it.
 fn insert_str(app: &mut App, s: &str) {
-    for ch in s.chars() {
-        app.canvas.insert_shift(app.cursor.0, app.cursor.1, ch);
-        app.cursor.0 += 1;
-    }
-    app.viewport.scroll_to_show(app.cursor);
+    crate::editing::insert_str(app, s);
 }
 
 /// A normal Enter, then the tag prefix (as typed on the source line, case

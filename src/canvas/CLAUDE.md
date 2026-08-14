@@ -14,17 +14,15 @@ Absolute integer cell coordinates `(x, y)` as `Coord` (= `i64`), unbounded in al
 - `set(x, y, ch)` — overwrite a cell
 - `clear(x, y)` — erase to blank (idempotent)
 - `len()` — count of written cells
-- `insert_shift(x, y, ch)` — Insert-mode write; shifts the row's cells at `x' >= x` one right
-- `delete_shift(x, y)` — delete `(x, y)`; shifts the row's cells at `x' > x` one left
 - `cells() -> Vec<(Coord, Coord, char)>` — all written cells, sorted by `(y, x)`; used by persistence, the overview/selection, and tests to reconstruct rows
 
 ## Invariants
 - A cell is present-with-a-char or absent — never present-but-blank. Erase via `clear`, not `set(' ')`.
-- All edit ops act on a single row; cross-row reflow is not this feature's job (editing decides when a new row starts).
+- The canvas stores and addresses cells; it has **no** notion of a line. Row-wide `insert_shift`/`delete_shift` primitives used to live here and were removed in M24 — they shifted *every* cell on the row, dragging a side column past a ≥2-blank gap. Shifting is the line model's job: see `layout::open_columns` (right) and `editing::delete_pull` (left).
 
 ## Gotchas
-- Row-wide shifts are O(populated cells in row) — fine normally; watch a single enormous row.
-- One `char` per cell — including a double-width char (CJK, emoji), which the *writers* in `editing` follow with a blank cell so it spans two canvas columns on screen (M23, see `crate::width`). The canvas itself stays width-agnostic: it stores and shifts cells, it does not know what a char looks like.
+- `cells()` is O(all populated cells) and sorts; callers doing per-row work in a loop should hoist it.
+- One `char` per cell — including a double-width char (CJK, emoji), which the *writers* in `editing` follow with a blank cell so it spans two canvas columns on screen (M23, see `crate::width`). The canvas itself stays width-agnostic: it stores and addresses cells, it does not know what a char looks like.
 
 ## Ownership
 Writes: editing + paste handlers (M5/M6). Reads: render (visible window) (M3). This module owns the cell-storage contract only — cursor, scrolling, and bookmarks are separate features.

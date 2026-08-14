@@ -119,6 +119,44 @@ pub fn make_room(canvas: &mut Canvas, band: (Coord, Coord), at_row: Coord) {
     }
 }
 
+/// Open `n` blank columns at column `x` on row `y` by shifting cells **right**,
+/// the horizontal analogue of [`make_room`] (M24).
+///
+/// Only the line under `x` moves: a ≥2-blank gap ends it, so a side column past
+/// that gap is not dragged along by insert-mode typing. When the shift would
+/// squeeze the gap to the next line below two blanks, that line moves too and
+/// the push cascades — side-by-side columns keep their separation instead of
+/// silently merging into one line. A cursor in blank space, or just past a
+/// line's end, has nothing to its right to push, so this is a no-op there.
+pub fn open_columns(canvas: &mut Canvas, x: Coord, y: Coord, n: Coord) {
+    let segs = segments_on_row(canvas, y);
+    let Some(first) = segs.iter().position(|&(s, e)| s <= x && x <= e) else {
+        return; // blank space or past the line's end — nothing to push
+    };
+    let mut last = first;
+    while let Some(&(next_start, _)) = segs.get(last + 1) {
+        // Blanks between this line's end and the next line's start. The gap must
+        // still be ≥2 after the shift, or the two would read as one line.
+        let gap = next_start - segs[last].1 - 1;
+        if gap - n >= 2 {
+            break;
+        }
+        last += 1;
+    }
+    let stop = segs[last].1;
+    // Collect-then-write so the shift can't clobber itself. Whitespace cells move
+    // too (they are stored cells); only "filled" columns define the boundaries.
+    let moved: Vec<(Coord, char)> = (x..=stop)
+        .filter_map(|cx| canvas.get(cx, y).map(|c| (cx, c)))
+        .collect();
+    for &(cx, _) in &moved {
+        canvas.clear(cx, y);
+    }
+    for (cx, c) in moved {
+        canvas.set(cx + n, y, c);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +293,80 @@ mod tests {
         assert_eq!(c.get(10, 1), Some('N')); // side column stays on row 1
         assert_eq!(c.get(0, 1), None);
         assert_eq!(row(&c, 2), "aaa");
+    }
+
+    /// Row `y` as columns 0..30, blanks as '.', for readable shift assertions.
+    fn strip(c: &Canvas, y: Coord) -> String {
+        (0..30).map(|x| c.get(x, y).unwrap_or('.')).collect()
+    }
+
+    #[test]
+    fn open_columns_shifts_only_the_cursors_line() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "hello world");
+        put(&mut c, 20, 0, "NOTES"); // past a ≥2-blank gap
+        open_columns(&mut c, 0, 0, 1);
+        // The line moves right by one; the side column keeps its columns.
+        assert_eq!(strip(&c, 0), ".hello world........NOTES.....");
+    }
+
+    #[test]
+    fn open_columns_shifts_only_from_the_cursor_rightward() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "hello world");
+        open_columns(&mut c, 6, 0, 1);
+        assert_eq!(strip(&c, 0), "hello .world..................");
+    }
+
+    #[test]
+    fn open_columns_is_a_noop_off_a_line() {
+        let mut c = Canvas::new();
+        put(&mut c, 20, 0, "NOTES");
+        let before = strip(&c, 0);
+        open_columns(&mut c, 5, 0, 1); // blank space, nothing to its right on its line
+        open_columns(&mut c, 25, 0, 1); // one past the line's end
+        assert_eq!(strip(&c, 0), before);
+    }
+
+    #[test]
+    fn open_columns_cascades_rather_than_merging_two_lines() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "ab");
+        put(&mut c, 4, 0, "NOTES"); // columns 2,3 blank — exactly 2 of separation
+        assert_eq!(segments_on_row(&c, 0), vec![(0, 1), (4, 8)]);
+        open_columns(&mut c, 0, 0, 1);
+        // Shifting "ab" alone would leave 1 blank and the two would read as a
+        // single line, so the side column moves along and the gap stays 2.
+        assert_eq!(strip(&c, 0), ".ab..NOTES....................");
+        assert_eq!(segments_on_row(&c, 0), vec![(1, 2), (5, 9)]);
+    }
+
+    #[test]
+    fn open_columns_stops_when_the_gap_can_absorb_the_shift() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "ab");
+        put(&mut c, 5, 0, "NOTES"); // 3 blanks — one to spare
+        open_columns(&mut c, 0, 0, 1);
+        // The gap absorbs the shift, so the side column does not move at all.
+        assert_eq!(c.get(5, 0), Some('N'));
+        assert_eq!(strip(&c, 0), ".ab..NOTES....................");
+    }
+
+    #[test]
+    fn open_columns_opens_two_for_a_wide_char() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "ab");
+        open_columns(&mut c, 0, 0, 2);
+        assert_eq!(strip(&c, 0), "..ab..........................");
+    }
+
+    #[test]
+    fn open_columns_moves_stored_spaces_too() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "a b"); // the space is a stored cell, one blank
+        open_columns(&mut c, 0, 0, 1);
+        assert_eq!(c.get(1, 0), Some('a'));
+        assert_eq!(c.get(2, 0), Some(' ')); // carried along, still a real cell
+        assert_eq!(c.get(3, 0), Some('b'));
     }
 }
