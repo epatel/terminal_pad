@@ -1,0 +1,81 @@
+#!/bin/bash
+#
+# Open the central "pad" canvas in terminal_pad, passing any arguments through.
+#
+#   pad                 -> terminal_pad --name pad
+#   pad --clear         -> terminal_pad --name pad --clear
+#   pad -h              -> terminal_pad -h
+#   pad notes.tpad      -> terminal_pad notes.tpad      (own target: no --name)
+#   pad --name notes    -> terminal_pad --name notes
+#
+# terminal_pad rejects --name together with a positional PATH, so the default
+# --name pad is only added when the arguments name no pad of their own.
+#
+#   pad --create notes  -> write a "pad-notes" shortcut next to this script,
+#                          which runs "pad --name notes"
+#
+# Put this on your PATH (see README -> Usage -> A "pad" wrapper).
+
+if [ "$1" = "--create" ]
+then
+  name="$2"
+  case "$name" in
+    ''|-*|*/*|*[!A-Za-z0-9_.-]*)
+      echo "pad: --create needs a NAME made of letters, digits, '.', '_' or '-'" >&2
+      exit 1
+      ;;
+  esac
+
+  dir=$(cd -- "$(dirname -- "$0")" && pwd)
+  target="$dir/pad-$name"
+
+  if [ -e "$target" ]
+  then
+    echo "pad: $target already exists" >&2
+    exit 1
+  fi
+
+  cat > "$target" <<EOF
+#!/bin/bash
+#
+# Created by "pad --create $name".
+#
+exec "$dir/pad" --name "$name" "\$@"
+EOF
+  chmod +x "$target"
+  echo "created $target"
+  exit 0
+fi
+
+if ! command -v terminal_pad >/dev/null 2>&1
+then
+  echo "pad: terminal_pad is not on PATH — see the project README to install it" >&2
+  exit 127
+fi
+
+# Decide whether to supply the default pad. Anything that names a target of its
+# own (a positional PATH, an explicit --name) or that never opens a canvas at
+# all (-h/--help, -V/--version) is passed straight through.
+use_default=1
+skip_value=0
+for arg in "$@"
+do
+  if [ "$skip_value" -eq 1 ]
+  then
+    skip_value=0            # the value after --name, not a PATH
+    continue
+  fi
+  case "$arg" in
+    --name)     use_default=0; skip_value=1 ;;
+    -h|--help|-V|--version) use_default=0 ;;
+    -*)         ;;          # a plain flag (--clear): keep the default pad
+    *)          use_default=0 ;;   # a positional PATH
+  esac
+done
+
+if [ "$use_default" -eq 1 ]
+then
+  exec terminal_pad --name pad "$@"
+else
+  exec terminal_pad "$@"
+fi

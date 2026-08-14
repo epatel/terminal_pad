@@ -102,6 +102,43 @@ terminal_pad --version       # print the version
 `--name` and a positional `FILE` are mutually exclusive. `--clear` starts from
 an empty canvas; the cleared state is written on exit / Ctrl+S.
 
+### A `pad` wrapper
+
+Typing `terminal_pad --name pad` to reach your everyday scratch canvas gets old.
+[`scripts/pad`](scripts/pad) is a small wrapper that supplies `--name pad` for
+you — copy it anywhere on your `PATH`:
+
+```sh
+install -m 755 scripts/pad ~/bin/pad     # or /usr/local/bin, ~/.local/bin, …
+```
+
+Then:
+
+```sh
+pad                  # terminal_pad --name pad      — the default central pad
+pad --clear          # terminal_pad --name pad --clear
+pad notes.tpad       # terminal_pad notes.tpad      — a target of its own
+pad --name notes     # terminal_pad --name notes    — passed straight through
+pad -h               # terminal_pad -h
+```
+
+The default `--name pad` is added only when the arguments name no pad of their
+own, since `--name` and a positional `FILE` are mutually exclusive. A bare flag
+like `--clear` keeps the default pad; a `FILE`, an explicit `--name`, or
+`-h`/`-V` does not.
+
+For a second pad you reach often, `--create` writes a sibling shortcut next to
+the wrapper:
+
+```sh
+pad --create work    # writes ~/bin/pad-work, which runs: pad --name work
+pad-work             # terminal_pad --name work
+pad-work --clear     # arguments pass through
+```
+
+The wrapper needs `terminal_pad` on your `PATH`; it exits 127 with a message if
+it isn't there.
+
 During development:
 
 ```sh
@@ -197,6 +234,9 @@ flowchart LR
   editing --> width["width — display width of a char"]
   render --> width
 ```
+
+`scripts/pad` is a shell wrapper around the built binary (see
+[Usage](#a-pad-wrapper)), not part of the crate.
 
 ## Development
 
