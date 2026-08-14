@@ -57,6 +57,21 @@ impl Viewport {
         self.origin.1 += dy * sy;
     }
 
+    /// Park `(cx, cy)` a quarter of the way in from the top-left of the visible
+    /// rectangle. Used for a jump to somewhere off screen (a Ctrl+F find hit),
+    /// where the minimal scroll of [`scroll_to_show`](Self::scroll_to_show)
+    /// would leave the target pinned to an edge with no context around it.
+    ///
+    /// A quarter in rather than centered: text runs left-to-right and downward,
+    /// so most of what you want to read after landing lies below and to the
+    /// right of the hit. No-op if the viewport has no size yet.
+    pub fn focus_on(&mut self, (cx, cy): (Coord, Coord)) {
+        if self.width == 0 || self.height == 0 {
+            return;
+        }
+        self.origin = (cx - self.width as Coord / 4, cy - self.height as Coord / 4);
+    }
+
     /// Cursor-follow: scroll the minimum amount so `(cx, cy)` sits inside the
     /// visible rectangle. No-op if the viewport has no size yet.
     pub fn scroll_to_show(&mut self, (cx, cy): (Coord, Coord)) {

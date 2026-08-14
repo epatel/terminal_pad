@@ -19,6 +19,7 @@ A read-only centered panel listing every keybinding, toggled by **Ctrl+H**. Trig
 - Pure and side-effect-free (testable without a terminal).
 - Output is exactly `height` rows, each `width` chars.
 - `BINDINGS` is the single source of truth for the list — add a binding here when adding a keybinding elsewhere.
+- The panel **only just fits a 24-row terminal** (body = title + 20 bindings + footer, +2 for the border = exactly 24). A new binding must buy its row from an existing one — M26 merged Ctrl+I and Ctrl+B onto one line to make room for Ctrl+F. Overflowing silently trips the too-small fallback and the help renders **blank**, so `draws_a_framed_panel` asserts the newest binding is actually drawn.
 
 ## Ownership
 Owns the `help` overlay construction and the `BINDINGS` list. `App` holds the `help: bool` flag. Reads nothing from the canvas/viewport.

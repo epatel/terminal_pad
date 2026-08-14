@@ -55,6 +55,12 @@ Ships as a single self-contained binary.
   Delete/Backspace, cancel with Esc.
 - **Paste** — bracketed paste drops a block at the cursor, preserving lines
   (CR / CRLF / LF all handled).
+- **Find** — **Ctrl+F** searches the canvas: a live prompt in the status line
+  that jumps as you type, **Ctrl+F** again cycles through the other hits,
+  **Enter** keeps the spot and **Esc** puts you back where you started.
+  Case-insensitive substring match. Write `#name` tags anywhere and find them
+  the same way — type `#api` for one, or a bare `#` to walk them all; tags are
+  just text, nothing to register or store.
 - **Bookmarks** — nine slots: **Ctrl+1..9** jump, **Ctrl+Shift+1..9** save the
   current cursor *and* view.
 - **Overview** — **Ctrl+Z** zooms out to a density minimap with your current view
@@ -167,6 +173,7 @@ contents.
 | Enter on a `[Calc]` line | Calculator: `expr=` inserts the result; `name = expr` assigns a session variable; otherwise chains a new `[Calc]` line |
 | Enter on a `[ ]` / `[x]` line | Chains a fresh `[ ] ` checklist item; a bare `[ ] ` ends the list |
 | Ctrl+B | Toggle banner mode — typing stamps big figlet (`smslant`) letters; Enter drops a glyph height |
+| Ctrl+F | Find text: type to search (jumps live), Ctrl+F again for the next hit, Enter keeps it, Esc goes back. `#api` finds a tag |
 | Ctrl+1 … Ctrl+9 | Jump to bookmark 1–9 |
 | Ctrl+Shift+1 … Ctrl+Shift+9 | Save bookmark 1–9 |
 | Ctrl+Z | Toggle zoom-out overview (Shift+arrows pan ⅓ there) |
@@ -189,7 +196,7 @@ contents.
 report their modifiers, which the app enables when supported. Use
 **kitty / WezTerm / Ghostty / recent iTerm2** for these to work reliably; in
 plain macOS Terminal.app, `Ctrl+I` registers as Tab and `Ctrl+digit` may not be
-distinguishable. `Ctrl+Z`, `Ctrl+S`, arrows, the mouse, and editing work
+distinguishable. `Ctrl+F` (find) is a plain control code and works everywhere. `Ctrl+Z`, `Ctrl+S`, arrows, the mouse, and editing work
 everywhere. `Option+Arrow` word jump needs the same protocol (some terminals
 otherwise send `ESC b`/`ESC f`). Capturing the mouse takes over the terminal's
 own click-to-select/copy — hold **Shift** (or **Option**) for native selection.
@@ -224,6 +231,7 @@ flowchart LR
   app --> todo["todo — checkbox chaining"]
   app --> banner["banner — figlet typing"]
   app --> locations["locations — bookmarks"]
+  app --> find["find — canvas text search"]
   app --> overview["overview — minimap"]
   app --> layout["layout — line model + push-down"]
   app --> selection["selection — rectangle + clip"]

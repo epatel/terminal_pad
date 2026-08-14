@@ -5,7 +5,7 @@ Draws each frame: the visible canvas window, the terminal cursor, and a one-row 
 ## Layout
 `Layout::vertical([Min(0), Length(1)])` splits the frame into the **canvas area** (top, flexible) and a **status line** (bottom, one row). The viewport's `width`/`height` are synced to the canvas area here every frame, so a terminal resize is absorbed without a separate handler (M4 adds the clamp).
 
-`draw` branches on app state: the **help** overlay (`app.help`) and the **overview** (`app.zoom == Overview`) each paint their own full-screen content and return early; otherwise the normal editor below.
+`draw` branches on app state: the **help** overlay (`app.help`) and the **overview** (`app.zoom == Overview`) each paint their own full-screen content and return early; otherwise the normal editor below. A live **find** (`app.search`, M26) is a partial branch — the canvas is painted as usual (the jump must be visible while typing) but the status line becomes ` FIND  query_   i/n   · … ` and the cursor is placed before returning.
 
 ## What it draws (normal editor)
 - **Canvas window** — `window_rows(canvas, viewport)` builds one `String` per screen row (each `width` **columns**, blanks for unwritten cells) via `viewport.canvas_at` + `canvas.get`. Pure and unit-tested.

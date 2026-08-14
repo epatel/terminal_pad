@@ -20,8 +20,10 @@ const BINDINGS: &[(&str, &str)] = &[
     ("Esc", "cancel selection"),
     ("[Calc] + Enter", "calc: eval `1+2=` / assign"),
     ("[ ] / [x] + Enter", "todo: chain a new [ ] item"),
-    ("Ctrl+I", "toggle Insert / Overwrite"),
-    ("Ctrl+B", "toggle banner (figlet) typing"),
+    // Ctrl+I and Ctrl+B share a row: the panel only just fits a 24-row
+    // terminal, so a new binding has to buy its line from an existing one.
+    ("Ctrl+I / Ctrl+B", "toggle insert / banner mode"),
+    ("Ctrl+F", "find text / #tag (^F = next)"),
     ("Ctrl+1..9 (+Shift)", "jump / save bookmark"),
     ("Ctrl+Z", "overview / minimap"),
     ("Ctrl+S", "save to file"),
@@ -133,6 +135,9 @@ mod tests {
         // A representative binding is present.
         assert!(joined.contains("Ctrl+Z"));
         assert!(joined.contains("this help"));
+        // The panel only just fits 24 rows, so every added binding has to be
+        // checked to still draw rather than trip the too-small blank fallback.
+        assert!(joined.contains("Ctrl+F"));
     }
 
     #[test]

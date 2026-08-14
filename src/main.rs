@@ -17,6 +17,7 @@
 //!   - calc        (M18)     — [Calc] tag calculator on Enter
 //!   - todo        (M20)     — [ ] checkbox list chaining on Enter
 //!   - banner      (M21)     — Ctrl+B figlet-style big-letter typing
+//!   - find        (M26)     — Ctrl+F live canvas search (finds #tags too)
 
 mod app;
 mod banner;
@@ -24,6 +25,7 @@ mod calc;
 mod canvas;
 mod clipboard;
 mod editing;
+mod find;
 mod help;
 mod layout;
 mod locations;
@@ -301,7 +303,10 @@ fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 // Esc clears an active selection before it falls through to quit.
-                if key.code == KeyCode::Esc && app.selection.is_some() {
+                if key.code == KeyCode::Esc && app.search.is_some() {
+                    // Esc cancels a find before it can reach quit.
+                    find::cancel(app);
+                } else if key.code == KeyCode::Esc && app.selection.is_some() {
                     app.selection = None;
                 } else if should_quit(&key) {
                     break;
@@ -414,6 +419,22 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
         return;
     }
 
+    // A live find (Ctrl+F) owns the keyboard while it runs: typing narrows it,
+    // Ctrl+F steps to the next hit, Backspace edits it (and walks out of the
+    // search on an empty query), Enter keeps the landing spot. Esc cancels,
+    // handled in the event loop before it can reach quit. Any other key accepts
+    // the search and is swallowed.
+    if app.search.is_some() {
+        match key.code {
+            KeyCode::Enter => find::accept(app),
+            KeyCode::Backspace => find::backspace(app),
+            KeyCode::Char('f') if ctrl => find::advance(app),
+            KeyCode::Char(c) if !ctrl && !alt => find::push(app, c),
+            _ => find::accept(app),
+        }
+        return;
+    }
+
     // Ctrl+Z toggles overview in either mode.
     if ctrl && key.code == KeyCode::Char('z') {
         app.toggle_zoom();
@@ -520,6 +541,10 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
                 editing::newline(app)
             }
         }
+        // Ctrl+F — open a live find over the canvas. A `#name` tag is just
+        // text, so typing `#api` searches for one. Plain ASCII control code
+        // (0x06), so unlike the Ctrl+digit bindings it works in any terminal.
+        KeyCode::Char('f') if ctrl => find::open(app),
         // Locations: Ctrl+1..9 jump, Ctrl+Shift+1..9 save. Needs a terminal that
         // reports Ctrl+digit modifiers (Kitty keyboard protocol — see notes).
         KeyCode::Char(c) if ctrl && locations::slot_for_digit(c).is_some() => {

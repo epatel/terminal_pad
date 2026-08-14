@@ -16,6 +16,7 @@ Visible rectangle: `[origin.x, origin.x+width)` × `[origin.y, origin.y+height)`
 - `step() -> (Coord, Coord)` — the one-third-screen jump distance (`width/3`, `height/3`), floored at 1 each axis.
 - `jump(dx, dy)` — move `origin` by whole `step`s. The viewport primitive; the cursor is moved separately by the caller.
 - `scroll_to_show((cx, cy))` — cursor-follow: scroll the minimum to bring the cursor back inside the visible rect.
+- `focus_on((cx, cy))` — park a point a **quarter** in from the top-left of the view (M26). For a jump to somewhere off screen (a Ctrl+F find hit), where the minimal scroll of `scroll_to_show` would pin the target to an edge with no context. A quarter rather than centered because text runs left-to-right and downward, so what you want after landing lies below and to the right.
 - Wiring: key dispatch lives in `main::handle_key`. `App::move_cursor` (arrows → move + `scroll_to_show`); `App::jump_view` (Shift+arrow → `jump` **and** carry the cursor the same delta, so it keeps its screen position and reversing returns to start); `App::pan_view` (overview arrows → move view+cursor by a screenful). **Resize** is handled in the event loop: re-sync `width`/`height` (minus the status row) then `scroll_to_show`.
 
 ## Mouse

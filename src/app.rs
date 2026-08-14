@@ -48,6 +48,9 @@ pub struct App {
     /// reached — used to spot double- and triple-clicks (crossterm reports
     /// individual presses, not click counts).
     pub last_click: Option<(Instant, (Coord, Coord), u8)>,
+    /// Live canvas search opened by Ctrl+F (M26), if one is running. Not
+    /// persisted — a search never outlives the keystrokes that drive it.
+    pub search: Option<crate::find::Search>,
 }
 
 /// Longest gap between two clicks on the same cell that still counts as a
@@ -73,6 +76,7 @@ impl App {
             calc: CalcState::default(),
             banner: false,
             last_click: None,
+            search: None,
         }
     }
 

@@ -60,6 +60,25 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let lines = canvas_lines(&app.canvas, &app.viewport, app.selection.as_ref());
     frame.render_widget(Paragraph::new(lines), canvas_area);
 
+    // A live find takes over the status line — the canvas stays drawn so the
+    // jump it performs is visible while typing.
+    if let Some(search) = &app.search {
+        let hits = match search.position() {
+            Some((i, n)) => format!("{i}/{n}"),
+            None => "no match".into(),
+        };
+        let status = format!(
+            " FIND  {}_   {}   ·   type to search · ^F next · Enter keep · Esc cancel ",
+            search.query(),
+            hits,
+        );
+        frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
+        if let Some((sx, sy)) = app.viewport.screen_of(app.cursor.0, app.cursor.1) {
+            frame.set_cursor_position(Position::new(canvas_area.x + sx, canvas_area.y + sy));
+        }
+        return;
+    }
+
     let marks: String = app
         .locations
         .iter()
