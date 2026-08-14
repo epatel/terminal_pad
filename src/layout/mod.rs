@@ -58,6 +58,29 @@ pub fn line_bounds(canvas: &Canvas, cx: Coord, cy: Coord) -> Option<(Coord, Coor
         .find(|&(s, e)| (s..=e + 1).contains(&cx))
 }
 
+/// The line a cursor parked on a **blank** at `cx` may pull left into that blank
+/// (M25): the segment starting at `cx + 1`.
+///
+/// [`line_bounds`] allows the cursor one column past a line's *end* (the typing
+/// position) but nothing before its *start*, so a cursor sitting on a leading
+/// blank — a typed space, or the hole left by an earlier delete — belongs to no
+/// line and deletion has nothing to pull. This reaches one column right instead.
+///
+/// Requiring the line to start at exactly `cx + 1` keeps the ≥2-blank rule: two
+/// blanks already separate lines, so content further right is a different line.
+/// A line whose left neighbour would end up within 2 blanks of it is refused —
+/// pulling must not merge two side-by-side columns into one line.
+pub fn line_right_of_blank(canvas: &Canvas, cx: Coord, cy: Coord) -> Option<(Coord, Coord)> {
+    let segs = segments_on_row(canvas, cy);
+    let i = segs.iter().position(|&(s, _)| s == cx + 1)?;
+    // After the pull the line starts at `cx`, so the neighbour on its left must
+    // end at or before `cx - 3` to leave the two blanks that keep them apart.
+    if i > 0 && segs[i - 1].1 > cx - 3 {
+        return None;
+    }
+    Some(segs[i])
+}
+
 /// Segments displaced when content spanning `span` lands on row `landing`:
 /// the overlapping segments on `landing` itself, or — when `landing` holds none
 /// but the row just below does — those on `landing + 1`, so a single blank
@@ -298,6 +321,45 @@ mod tests {
     /// Row `y` as columns 0..30, blanks as '.', for readable shift assertions.
     fn strip(c: &Canvas, y: Coord) -> String {
         (0..30).map(|x| c.get(x, y).unwrap_or('.')).collect()
+    }
+
+    #[test]
+    fn line_right_of_blank_claims_the_line_one_column_right() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, " hello"); // stored space at 0, line at 1..=5
+        assert_eq!(line_bounds(&c, 0, 0), None); // the cursor is on no line…
+        assert_eq!(line_right_of_blank(&c, 0, 0), Some((1, 5))); // …but reaches it
+    }
+
+    #[test]
+    fn line_right_of_blank_ignores_a_line_two_columns_away() {
+        let mut c = Canvas::new();
+        put(&mut c, 2, 0, "hi"); // blanks at 0 and 1 — two, so a separate line
+        assert_eq!(line_right_of_blank(&c, 0, 0), None);
+        assert_eq!(line_right_of_blank(&c, 1, 0), Some((2, 3)));
+    }
+
+    #[test]
+    fn line_right_of_blank_refuses_to_merge_two_columns() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "ab");
+        put(&mut c, 4, 0, "cd"); // exactly 2 blanks of separation
+        // Pulling "cd" into column 3 would leave 1 blank and merge the two.
+        assert_eq!(line_right_of_blank(&c, 3, 0), None);
+    }
+
+    #[test]
+    fn line_right_of_blank_allows_a_pull_the_gap_can_spare() {
+        let mut c = Canvas::new();
+        put(&mut c, 0, 0, "ab");
+        put(&mut c, 5, 0, "cd"); // 3 blanks — one to spare
+        assert_eq!(line_right_of_blank(&c, 4, 0), Some((5, 6)));
+    }
+
+    #[test]
+    fn line_right_of_blank_on_a_blank_row() {
+        let c = Canvas::new();
+        assert_eq!(line_right_of_blank(&c, 3, 0), None);
     }
 
     #[test]

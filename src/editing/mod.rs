@@ -149,12 +149,20 @@ pub fn delete_pull(app: &mut App) {
 /// (touching nothing) when the cursor is not on a line, or sits at/past its end
 /// — there is no char there to delete and nothing to its right to pull.
 fn pull_line_left(canvas: &mut Canvas, cx: Coord, cy: Coord) -> bool {
-    let Some((_, e)) = crate::layout::line_bounds(canvas, cx, cy) else {
-        return false;
+    let e = match crate::layout::line_bounds(canvas, cx, cy) {
+        Some((_, e)) if cx <= e => e,
+        // On a line but at or past its end: nothing under the cursor to delete.
+        Some(_) => return false,
+        // Parked on a blank — a typed space, or the hole an earlier delete left
+        // behind. `line_bounds` reaches one column past a line's end but not
+        // before its start, so claim the line starting one column right instead;
+        // without this, repeated deletes stick as soon as the cursor lands on a
+        // leading space. Refused when pulling would merge two columns.
+        None => match crate::layout::line_right_of_blank(canvas, cx, cy) {
+            Some((_, e)) => e,
+            None => return false,
+        },
     };
-    if cx > e {
-        return false;
-    }
     for x in cx..e {
         match canvas.get(x + 1, cy) {
             Some(c) => canvas.set(x, cy, c),
@@ -458,6 +466,76 @@ mod tests {
         app.cursor = (20, 0);
         delete_pull(&mut app);
         assert_eq!(strip(&app, 0), "hello world.........OTES......");
+    }
+
+    #[test]
+    fn ctrl_d_keeps_pulling_across_a_space() {
+        // Repeated Ctrl+D used to stick the moment the cursor landed on the
+        // leading space: the cursor was left of the line's first filled column,
+        // so line_bounds reported no line and the pull bailed.
+        let mut app = App::new();
+        for (i, c) in "ab cd".chars().enumerate() {
+            app.canvas.set(i as Coord, 0, c);
+        }
+        app.cursor = (0, 0);
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            delete_pull(&mut app);
+            seen.push(strip(&app, 0)[..5].to_string());
+        }
+        assert_eq!(seen, ["b cd.", " cd..", "cd...", "d....", "....."]);
+    }
+
+    #[test]
+    fn ctrl_d_on_a_line_starting_with_a_space() {
+        let mut app = App::new();
+        for (i, c) in " hello".chars().enumerate() {
+            app.canvas.set(i as Coord, 0, c);
+        }
+        app.cursor = (0, 0);
+        delete_pull(&mut app);
+        assert_eq!(strip(&app, 0), "hello.........................");
+    }
+
+    #[test]
+    fn ctrl_d_in_a_blank_will_not_merge_two_columns() {
+        // "ab" and "cd" with exactly 2 blanks between them: pulling "cd" into
+        // the cursor's blank would leave 1 and make them a single line.
+        let mut app = App::new();
+        for (x, s) in [(0, "ab"), (4, "cd")] {
+            for (i, c) in s.chars().enumerate() {
+                app.canvas.set(x + i as Coord, 0, c);
+            }
+        }
+        app.cursor = (3, 0);
+        delete_pull(&mut app);
+        assert_eq!(strip(&app, 0), "ab..cd........................");
+    }
+
+    #[test]
+    fn ctrl_d_in_a_blank_pulls_when_the_gap_can_spare_it() {
+        let mut app = App::new();
+        for (x, s) in [(0, "ab"), (5, "cd")] {
+            for (i, c) in s.chars().enumerate() {
+                app.canvas.set(x + i as Coord, 0, c);
+            }
+        }
+        app.cursor = (4, 0);
+        delete_pull(&mut app);
+        // 3 blanks had one to spare, so "cd" moves left and 2 remain.
+        assert_eq!(strip(&app, 0), "ab..cd........................");
+    }
+
+    #[test]
+    fn delete_also_keeps_pulling_across_a_space() {
+        // Delete/Backspace share the pull, so they had the same stuck behavior.
+        let mut app = App::new();
+        for (i, c) in " hi".chars().enumerate() {
+            app.canvas.set(i as Coord, 0, c);
+        }
+        app.cursor = (0, 0);
+        delete(&mut app);
+        assert_eq!(strip(&app, 0), "hi............................");
     }
 
     #[test]

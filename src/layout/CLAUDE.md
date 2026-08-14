@@ -31,6 +31,14 @@ Triggered when working on Enter/`newline`, line detection, or block push-down.
   `editing::{line_start,line_end}` to hop to a neighboring part) and private
   `filled_columns`, `overlaps`, `displaced`.
 
+- `line_right_of_blank(canvas, cx, cy) -> Option<(start, end)>` — the line a
+  cursor parked on a **blank** at `cx` may pull left into it: the segment
+  starting at exactly `cx + 1` (M25). `line_bounds` reaches one column past a
+  line's *end* but nothing before its *start*, so a cursor on a leading space
+  belongs to no line; this covers the other side for deletion. Requiring
+  `cx + 1` keeps the ≥2-blank rule (content further right is a different line),
+  and a pull that would leave a left-hand neighbour within 2 blanks is refused
+  so two columns never merge. Pure. Used by `editing::pull_line_left`.
 - `open_columns(canvas: &mut Canvas, x, y, n)` — **the horizontal analogue of
   `make_room`** (M24): open `n` blank columns at `(x, y)` by shifting cells
   **right**. Only the line under `x` moves — a ≥2-blank gap ends it, so a side
@@ -64,7 +72,9 @@ back to the saved `anchor_x`.
   is the source row above.
 
 ## Status
-M24 added `open_columns` (7 unit tests: line-only shift, shift-from-cursor,
+M25 added `line_right_of_blank` (5 unit tests: claims the line one column right,
+ignores one two columns away, refuses a merging pull, allows a pull the gap can
+spare, blank row). M24 added `open_columns` (7 unit tests: line-only shift, shift-from-cursor,
 no-op off a line, cascade vs. merge, gap absorbs the shift, `n = 2` for a wide
 char, stored spaces carried). Implemented (M15) with unit tests (`line_bounds` single-space merge / ≥2-gap split
 / end+1 / blank row; `make_room` no-op / single shift / cascade / single-blank
