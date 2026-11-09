@@ -25,6 +25,8 @@ flowchart LR
   dispatch --> loc[locations]
   dispatch --> sel[selection]
   dispatch --> mouse[mouse]
+  dispatch --> find[find]
+  find --> clamp
   nav --> clamp[update_viewport]
   edit --> clamp
   paste --> clamp
@@ -38,7 +40,8 @@ flowchart LR
 - **read_event** — block on a crossterm event (key, mouse, paste, resize). Bracketed paste and mouse capture are enabled, so a paste arrives as one `Event::Paste(String)` and clicks/drags/wheel as `Event::Mouse`.
 - **dispatch** — route the event to exactly one handler based on key/modifiers (or mouse kind).
 - **navigate** — arrows move the cursor by 1 cell; Shift+arrows jump the viewport by 1/3 of its width/height; Alt+Left/Right jump by a word.
-- **edit** — printable keys write a char at the cursor (Insert shifts the row's trailing cells right; Overwrite replaces in place); Backspace/Delete handled here; Ctrl+I toggles mode. **Enter splits the line** at the cursor (the trailing single-space-joined run moves down to the line's start, pushing blocks below down — `layout`).
+- **edit** — printable keys write a char at the cursor (Insert shifts only the cursor's *line* right, cascading into a neighbour rather than merging — `layout::open_columns`; Overwrite replaces in place); Backspace/Delete/Ctrl+D/Ctrl+K handled here; Ctrl+I toggles mode. **Enter** tries `calc::enter` → `todo::enter` → `editing::newline` (split the line at the cursor and push blocks below down — `layout`). In **banner** mode (Ctrl+B) a printable key stamps a figlet glyph instead.
+- **find** — while `App::search` is open (Ctrl+F), keys edit the query and jump between hits; Esc is intercepted before quit.
 - **paste** — insert a pasted block anchored at the cursor (bracketed paste, or the internal clip via Ctrl+V).
 - **locations** — Ctrl+1..9 jump the view/cursor to bookmark N; Ctrl+Shift+1..9 store the current location into slot N.
 - **selection** — Ctrl+C copies the rectangle (internal buffer + system clipboard), Del/Bksp clears it, Esc cancels.
@@ -57,8 +60,13 @@ flowchart LR
 - `src/layout/` — the "line" model + Enter's make-room push-down
 - `src/help/` — Ctrl+H keybinding cheat-sheet overlay
 - `src/selection/` — click-drag rectangle model + copy/paste/clear
+- `src/calc/` — `[Calc]` tag calculator on Enter (evalexpr, session variables)
+- `src/todo/` — `[ ]` checklist chaining on Enter
+- `src/banner/` — Ctrl+B figlet banner typing (vendored `smslant.flf`)
+- `src/find/` — Ctrl+F live canvas search
+- `src/width.rs` — display width of a char (CJK/emoji take two canvas columns); single file
 - `src/clipboard.rs` — system-clipboard wrapper (arboard); single file, no dir
-- `src/app.rs` — shared state (canvas, viewport, cursor, mode, bookmarks, zoom, help, selection, clip, path)
+- `src/app.rs` — shared state (canvas, viewport, cursor, mode, bookmarks, zoom, help, selection, clip, path, calc context, banner flag, search, last click)
 - `src/main.rs` — terminal lifecycle (raw mode, alt screen, mouse capture, panic-safe restore) + CLI parsing + the loop above
 
 Each feature directory has its own co-located `CLAUDE.md` (the single-file `clipboard` is documented inline + in `selection/CLAUDE.md`).

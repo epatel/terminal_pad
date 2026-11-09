@@ -42,7 +42,8 @@ serde + serde_json, a versioned `Doc`:
 - Erased cells are absent from `cells` (truly blank), keeping files small.
 
 ## Failure modes
-- Malformed/older file → `load` returns an error; `main` prints it and exits non-zero (never silently discards the file).
+- Malformed file → `load` returns an error; `main` prints it and exits non-zero (never silently discards the file). Older (v1) files load fine.
+- `version` is written but **not checked** on load: a file from a newer build would load with unknown fields dropped, and the exit auto-save would then overwrite it as v2.
 - JSON is fine for v1; a binary/RLE format is a later option if size/latency hurts.
 
 ## Ownership

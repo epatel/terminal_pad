@@ -2,3 +2,4 @@
 **/*.rs.bk
 *.tpad
 *.tpad.tmp
+.venv/
