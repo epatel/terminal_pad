@@ -119,38 +119,43 @@ fn inner(ch: char) -> bool {
 pub fn word_span(canvas: &Canvas, x: Coord, y: Coord) -> Option<(Coord, Coord)> {
     let ch = canvas.get(x, y)?;
     class_of(ch)?;
-    if inner(ch) {
-        let is_inner = |c: Coord| canvas.get(c, y).is_some_and(inner);
-        let (mut s, mut e) = (x, x);
-        while is_inner(s - 1) {
-            s -= 1;
-        }
-        while is_inner(e + 1) {
-            e += 1;
-        }
-        // Trim joiners off the edges; they only count between word chars.
-        let is_word = |c: Coord| canvas.get(c, y).and_then(class_of) == Some(Class::Word);
-        while s <= e && !is_word(s) {
-            s += 1;
-        }
-        while s <= e && !is_word(e) {
-            e -= 1;
-        }
-        // A run of joiners only (`--`), or a click on a trimmed-off edge joiner,
-        // is really punctuation — fall through to the punctuation run below.
-        if s <= e && (s..=e).contains(&x) {
-            return Some((s, e));
-        }
-    }
-    let is_punct = |c: Coord| canvas.get(c, y).and_then(class_of) == Some(Class::Punct);
+    let class_at = |c: Coord| canvas.get(c, y).and_then(class_of);
+    // A run of joiners only (`--`), or a click on a trimmed-off edge joiner, is
+    // really punctuation — fall through to the punctuation run.
+    let word = inner(ch)
+        .then(|| {
+            let run = expand(x, |c| canvas.get(c, y).is_some_and(inner));
+            trim_to(run, |c| class_at(c) == Some(Class::Word))
+        })
+        .flatten()
+        .filter(|&(s, e)| (s..=e).contains(&x));
+    word.or_else(|| Some(expand(x, |c| class_at(c) == Some(Class::Punct))))
+}
+
+/// The maximal column run around `x` whose neighbours satisfy `keep` (`x`
+/// itself is always included).
+fn expand(x: Coord, keep: impl Fn(Coord) -> bool) -> (Coord, Coord) {
     let (mut s, mut e) = (x, x);
-    while is_punct(s - 1) {
+    while keep(s - 1) {
         s -= 1;
     }
-    while is_punct(e + 1) {
+    while keep(e + 1) {
         e += 1;
     }
-    Some((s, e))
+    (s, e)
+}
+
+/// `run` shrunk from both ends until each end satisfies `keep` — used to trim
+/// joiners off a word's edges, since they only count between word chars.
+/// `None` when nothing in the run does.
+fn trim_to((mut s, mut e): (Coord, Coord), keep: impl Fn(Coord) -> bool) -> Option<(Coord, Coord)> {
+    while s <= e && !keep(s) {
+        s += 1;
+    }
+    while s <= e && !keep(e) {
+        e -= 1;
+    }
+    (s <= e).then_some((s, e))
 }
 
 /// Erase every cell in the selection back to truly-blank.
