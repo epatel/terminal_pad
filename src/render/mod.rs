@@ -6,7 +6,7 @@
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Position},
+    layout::{Constraint, Layout, Position, Rect},
     style::{Style, Stylize},
     text::{Line, Span},
     widgets::Paragraph,
@@ -14,6 +14,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::canvas::Canvas;
+use crate::find::Search;
 use crate::help;
 use crate::overview::{self, ZoomMode};
 use crate::selection::Selection;
@@ -32,53 +33,77 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.viewport.width = canvas_area.width;
     app.viewport.height = canvas_area.height;
 
-    if app.help {
-        let panel = help::rows(canvas_area.width, canvas_area.height);
+    // The help overlay and the overview paint their own full-screen content
+    // and show no text cursor.
+    if let Some((panel, status)) = overlay(app, canvas_area) {
         frame.render_widget(Paragraph::new(panel.join("\n")), canvas_area);
-        let status = format!(" HELP   ·   {}   ·   press any key to close ", app.status);
-        frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
-        return; // no text cursor while the cheat sheet is up
-    }
-
-    if app.zoom == ZoomMode::Overview {
-        let map = overview::rows(
-            &app.canvas,
-            &app.viewport,
-            canvas_area.width,
-            canvas_area.height,
-        );
-        frame.render_widget(Paragraph::new(map.join("\n")), canvas_area);
-        let status = format!(
-            " OVERVIEW   {} cells   {}   ·   ^Z back · ^S save · Esc/^Q quit ",
-            app.canvas.len(),
-            app.status,
-        );
-        frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
-        return; // no text cursor in the overview
-    }
-
-    let lines = canvas_lines(&app.canvas, &app.viewport, app.selection.as_ref());
-    frame.render_widget(Paragraph::new(lines), canvas_area);
-
-    // A live find takes over the status line — the canvas stays drawn so the
-    // jump it performs is visible while typing.
-    if let Some(search) = &app.search {
-        let hits = match search.position() {
-            Some((i, n)) => format!("{i}/{n}"),
-            None => "no match".into(),
-        };
-        let status = format!(
-            " FIND  {}_   {}   ·   type to search · ^F next · Enter keep · Esc cancel ",
-            search.query(),
-            hits,
-        );
-        frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
-        if let Some((sx, sy)) = app.viewport.screen_of(app.cursor.0, app.cursor.1) {
-            frame.set_cursor_position(Position::new(canvas_area.x + sx, canvas_area.y + sy));
-        }
+        status_bar(frame, status_area, status);
         return;
     }
 
+    // A live find keeps the canvas drawn — the jump it performs must be
+    // visible while typing — and takes over the status line.
+    let status = match &app.search {
+        Some(search) => find_status(search),
+        None => editor_status(app),
+    };
+    let lines = canvas_lines(&app.canvas, &app.viewport, app.selection.as_ref());
+    frame.render_widget(Paragraph::new(lines), canvas_area);
+    status_bar(frame, status_area, status);
+
+    // Place the real terminal cursor on the canvas cell, if it's visible.
+    if let Some((sx, sy)) = app.viewport.screen_of(app.cursor.0, app.cursor.1) {
+        frame.set_cursor_position(Position::new(canvas_area.x + sx, canvas_area.y + sy));
+    }
+}
+
+/// The full-screen overlay showing instead of the canvas, if any — the help
+/// cheat sheet or the overview minimap — as its rows plus its status line.
+fn overlay(app: &App, area: Rect) -> Option<(Vec<String>, String)> {
+    if app.help {
+        Some((help::rows(area.width, area.height), help_status(app)))
+    } else if app.zoom == ZoomMode::Overview {
+        let map = overview::rows(&app.canvas, &app.viewport, area.width, area.height);
+        Some((map, overview_status(app)))
+    } else {
+        None
+    }
+}
+
+/// Paint `text` as the reversed-video status line.
+fn status_bar(frame: &mut Frame, area: Rect, text: String) {
+    frame.render_widget(Paragraph::new(Line::from(text).reversed()), area);
+}
+
+fn help_status(app: &App) -> String {
+    format!(" HELP   ·   {}   ·   press any key to close ", app.status)
+}
+
+fn overview_status(app: &App) -> String {
+    format!(
+        " OVERVIEW   {} cells   {}   ·   ^Z back · ^S save · Esc/^Q quit ",
+        app.canvas.len(),
+        app.status,
+    )
+}
+
+/// The find prompt: the query, then `i/n` for the current hit or `no match`.
+fn find_status(search: &Search) -> String {
+    let hits = match search.position() {
+        Some((i, n)) => format!("{i}/{n}"),
+        None => "no match".into(),
+    };
+    format!(
+        " FIND  {}_   {}   ·   type to search · ^F next · Enter keep · Esc cancel ",
+        search.query(),
+        hits,
+    )
+}
+
+/// The normal editor's status: mode chip (with `+BAN` in banner mode), cursor,
+/// cell count, saved bookmark marks, selection size, the transient message,
+/// and a key hint.
+fn editor_status(app: &App) -> String {
     let marks: String = app
         .locations
         .iter()
@@ -89,28 +114,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Some(s) => format!("   sel {}x{}", s.width(), s.height()),
         None => String::new(),
     };
-    // The mode chip grows a BAN tag while banner (figlet) typing is on.
-    let mode = if app.banner {
-        format!("{}+BAN", app.mode.label())
-    } else {
-        app.mode.label().to_string()
-    };
-    let status = format!(
-        " {}   cursor ({}, {})   cells {}   marks [{}]{}   {}   ·   ^H help · ^C/^V copy/paste · ^S save · Esc/^Q quit ",
-        mode,
+    let ban = if app.banner { "+BAN" } else { "" };
+    format!(
+        " {}{}   cursor ({}, {})   cells {}   marks [{}]{}   {}   ·   ^H help · ^C/^V copy/paste · ^S save · Esc/^Q quit ",
+        app.mode.label(),
+        ban,
         app.cursor.0,
         app.cursor.1,
         app.canvas.len(),
         marks,
         sel,
         app.status,
-    );
-    frame.render_widget(Paragraph::new(Line::from(status).reversed()), status_area);
-
-    // Place the real terminal cursor on the canvas cell, if it's visible.
-    if let Some((sx, sy)) = app.viewport.screen_of(app.cursor.0, app.cursor.1) {
-        frame.set_cursor_position(Position::new(canvas_area.x + sx, canvas_area.y + sy));
-    }
+    )
 }
 
 /// Build the visible window as one `String` per screen row, each exactly `width`

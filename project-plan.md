@@ -14,7 +14,7 @@ Build a terminal (TUI) app that presents an infinite 2D canvas the user can past
 - [ ] **M27 — Code health: every file ≥ 9** — aihealth baseline 8.42 (2026-11-09); eight files score < 9. Behavior-preserving refactors only (the 189 tests are the safety net; `make lint` clean), worst first, **one commit per file**, re-scored after each. No new features, no module moves.
   - [x] `src/main.rs` 6.56 → 9.48 — split `handle_key` (cc 58) into consume-or-pass mode handlers (help → find → overview → selection) + an editor dispatcher with arrow / ctrl-key helpers; `main` → `resolve_path` / `ensure_parent_dir` / `load_or_clear`; `run` → `handle_event` + `sync_size`; `handle_mouse` → `left_press`; `parse` → per-arg step; `pad_path_in` → `is_bare_name`.
   - [x] `src/calc/mod.rs` 7.17 → 9.48 — `enter` → per-action fns (`eval_in_place`, `assign`); share the cursor-line preamble with `todo::enter` via one helper; `decode_radix` → `radix_literal` reader; `floatify` → digit-run helper; one shared `joins` predicate.
-  - [ ] `src/render/mod.rs` 7.89 — `draw` (77 lines, self-duplication) → `status_bar` + `place_cursor` helpers and per-branch status builders.
+  - [x] `src/render/mod.rs` 7.89 → 10.00 — `draw` (77 lines, self-duplication) → `status_bar` + `place_cursor` helpers and per-branch status builders.
   - [ ] `src/banner/mod.rs` 7.96 — `smush` → one fn per rule; `parse` → `parse_glyph` / `strip_endmark`; `fit_overlap` takes the cursor as one `(x, y)`.
   - [ ] `src/overview/mod.rs` 8.21 — `rows` → `bounds` / `density_grid` / `density_glyph`; `overlay_view_box` takes a small `Tiling` struct instead of 6 args.
   - [ ] `src/selection/mod.rs` 8.92 — `word_span` → shared `expand(x, pred)` + `trim_joiners`.
