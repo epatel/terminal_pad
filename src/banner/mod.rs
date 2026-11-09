@@ -48,25 +48,10 @@ fn parse(src: &str) -> Font {
     }
 
     let mut glyphs = HashMap::new();
-    'chars: for code in 32u32..=126 {
-        let mut rows: Vec<Vec<char>> = Vec::with_capacity(height);
-        for _ in 0..height {
-            let Some(line) = lines.next() else {
-                break 'chars;
-            };
-            let end = line.chars().last().unwrap_or('@');
-            let mut s = line;
-            for _ in 0..2 {
-                if let Some(stripped) = s.strip_suffix(end) {
-                    s = stripped;
-                }
-            }
-            rows.push(s.chars().collect());
-        }
-        let w = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-        for r in &mut rows {
-            r.resize(w, ' ');
-        }
+    for code in 32u32..=126 {
+        let Some(rows) = parse_glyph(&mut lines, height) else {
+            break;
+        };
         glyphs.insert(char::from_u32(code).unwrap(), rows);
     }
     Font {
@@ -74,6 +59,31 @@ fn parse(src: &str) -> Font {
         hardblank,
         glyphs,
     }
+}
+
+/// The next glyph: `height` lines with the endmark stripped, padded to a
+/// uniform width. `None` when the file runs out first.
+fn parse_glyph<'a>(
+    lines: &mut impl Iterator<Item = &'a str>,
+    height: usize,
+) -> Option<Vec<Vec<char>>> {
+    let mut rows = Vec::with_capacity(height);
+    for _ in 0..height {
+        rows.push(strip_endmark(lines.next()?).chars().collect::<Vec<char>>());
+    }
+    let w = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    for r in &mut rows {
+        r.resize(w, ' ');
+    }
+    Some(rows)
+}
+
+/// A glyph line without its endmark — the line's last char, doubled on the
+/// glyph's final line.
+fn strip_endmark(line: &str) -> &str {
+    let end = line.chars().last().unwrap_or('@');
+    let once = line.strip_suffix(end).unwrap_or(line);
+    once.strip_suffix(end).unwrap_or(once)
 }
 
 /// Toggle banner mode (Ctrl+B). Session-only, like the calculator state.
@@ -105,7 +115,7 @@ pub fn type_char(app: &mut App, c: char) {
     };
     let (cx, cy) = app.cursor;
     let width = glyph[0].len() as Coord;
-    let start = cx - fit_overlap(&app.canvas, glyph, font.hardblank, cx, cy);
+    let start = cx - fit_overlap(&app.canvas, glyph, font.hardblank, app.cursor);
 
     for (r, row) in glyph.iter().enumerate() {
         let y = cy + r as Coord;
@@ -142,8 +152,7 @@ fn fit_overlap(
     canvas: &Canvas,
     glyph: &[Vec<char>],
     hardblank: char,
-    cx: Coord,
-    cy: Coord,
+    (cx, cy): (Coord, Coord),
 ) -> Coord {
     let width = glyph[0].len() as Coord;
     const LOOKBACK: Coord = 32;
@@ -184,31 +193,48 @@ fn smush(l: char, r: char) -> Option<char> {
     if l == r {
         return Some(l); // rule 1: equal character
     }
-    const UNDER: &str = "|/\\[]{}()<>";
-    if l == '_' && UNDER.contains(r) {
-        return Some(r); // rule 2: underscore gives way
-    }
-    if r == '_' && UNDER.contains(l) {
-        return Some(l);
-    }
-    let class = |c: char| match c {
-        '|' => Some(1),
-        '/' | '\\' => Some(2),
-        '[' | ']' => Some(3),
-        '{' | '}' => Some(4),
-        '(' | ')' => Some(5),
-        '<' | '>' => Some(6),
-        _ => None,
-    };
-    if let (Some(a), Some(b)) = (class(l), class(r))
-        && a != b
-    {
-        return Some(if a > b { l } else { r }); // rule 3: hierarchy
-    }
+    underscore(l, r)
+        .or_else(|| hierarchy(l, r))
+        .or_else(|| opposite_pair(l, r))
+}
+
+/// Rule 2: an underscore gives way to a border char on the other side.
+fn underscore(l: char, r: char) -> Option<char> {
+    const BORDER: &str = "|/\\[]{}()<>";
     match (l, r) {
-        ('[', ']') | (']', '[') | ('{', '}') | ('}', '{') | ('(', ')') | (')', '(') => Some('|'), // rule 4
+        ('_', b) if BORDER.contains(b) => Some(b),
+        (b, '_') if BORDER.contains(b) => Some(b),
         _ => None,
     }
+}
+
+/// Rule 3: of two chars from different classes (`| < /\ < [] < {} < () < <>`),
+/// the higher class wins.
+fn hierarchy(l: char, r: char) -> Option<char> {
+    let (a, b) = (class(l)?, class(r)?);
+    match a.cmp(&b) {
+        std::cmp::Ordering::Greater => Some(l),
+        std::cmp::Ordering::Less => Some(r),
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
+/// The rule-3 class of a border char.
+fn class(c: char) -> Option<u8> {
+    let i = ["|", "/\\", "[]", "{}", "()", "<>"]
+        .iter()
+        .position(|set| set.contains(c))?;
+    Some(i as u8 + 1)
+}
+
+/// Rule 4: opposing brackets of one kind (`[]`, `][`, `{}`, `}{`, `()`, `)(`)
+/// become `|`.
+fn opposite_pair(l: char, r: char) -> Option<char> {
+    let pair = [l, r];
+    let opposite = ["[]", "{}", "()"]
+        .iter()
+        .any(|p| p.chars().eq(pair) || p.chars().rev().eq(pair));
+    opposite.then_some('|')
 }
 
 #[cfg(test)]
