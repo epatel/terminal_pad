@@ -16,7 +16,7 @@ Build a terminal (TUI) app that presents an infinite 2D canvas the user can past
   - [x] `src/calc/mod.rs` 7.17 → 9.48 — `enter` → per-action fns (`eval_in_place`, `assign`); share the cursor-line preamble with `todo::enter` via one helper; `decode_radix` → `radix_literal` reader; `floatify` → digit-run helper; one shared `joins` predicate.
   - [x] `src/render/mod.rs` 7.89 → 10.00 — `draw` (77 lines, self-duplication) → `status_bar` + `place_cursor` helpers and per-branch status builders.
   - [x] `src/banner/mod.rs` 7.96 → 9.43 — `smush` → one fn per rule; `parse` → `parse_glyph` / `strip_endmark`; `fit_overlap` takes the cursor as one `(x, y)`.
-  - [ ] `src/overview/mod.rs` 8.21 — `rows` → `bounds` / `density_grid` / `density_glyph`; `overlay_view_box` takes a small `Tiling` struct instead of 6 args.
+  - [x] `src/overview/mod.rs` 8.21 → 10.00 — `rows` → `bounds` / `density_grid` / `density_glyph`; `overlay_view_box` takes a small `Tiling` struct instead of 6 args.
   - [ ] `src/selection/mod.rs` 8.92 — `word_span` → shared `expand(x, pred)` + `trim_joiners`.
   - [ ] `src/layout/mod.rs` 8.93 — `make_room` → `moving_segments` + `shift_down`; expose `filled_columns` as `pub(crate)`.
   - [ ] `src/editing/mod.rs` 8.99 — drop `word_positions` (duplicate of `layout::filled_columns`); `pull_line_left` → `pull_end`; `insert_write` derives `cols` itself.

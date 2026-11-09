@@ -28,117 +28,156 @@ pub fn rows(canvas: &Canvas, vp: &Viewport, width: u16, height: u16) -> Vec<Stri
     if w < 3 || h < 3 {
         return vec![" ".repeat(w); h]; // too small for a frame
     }
-    let iw = w - 2; // inner columns
-    let ih = h - 2; // inner rows
-
     let cells = canvas.cells();
-
-    // View rectangle in canvas coords (always at least 1x1).
-    let vx0 = vp.origin.0;
-    let vy0 = vp.origin.1;
-    let vx1 = vp.origin.0 + (vp.width.max(1) as Coord) - 1;
-    let vy1 = vp.origin.1 + (vp.height.max(1) as Coord) - 1;
-
+    let view = CellRect::of_view(vp);
     // Bounding box = content bounds, unioned with the view rect so the view box
     // is always on screen even when it's outside any text.
-    let (mut minx, mut miny, mut maxx, mut maxy) = (vx0, vy0, vx1, vy1);
-    for &(x, y, _) in &cells {
-        minx = minx.min(x);
-        miny = miny.min(y);
-        maxx = maxx.max(x);
-        maxy = maxy.max(y);
-    }
+    let bounds = cells.iter().fold(view, |r, &(x, y, _)| r.including(x, y));
+    let tiling = Tiling::new(bounds, w - 2, h - 2);
 
-    let span_w = (maxx - minx + 1).max(1);
-    let span_h = (maxy - miny + 1).max(1);
-    // Ceiling division (all operands positive); i64::div_ceil is still unstable.
-    let tile_w = ((span_w + iw as Coord - 1) / iw as Coord).max(1);
-    let tile_h = ((span_h + ih as Coord - 1) / ih as Coord).max(1);
+    let mut grid = density_grid(&cells, &tiling);
+    overlay_view_box(&mut grid, &tiling, view);
+    assemble(&grid, tiling.iw)
+}
 
-    // Per-inner-cell content counts.
-    let mut counts = vec![0u32; iw * ih];
-    for &(x, y, _) in &cells {
-        let ix = ((x - minx) / tile_w) as usize;
-        let iy = ((y - miny) / tile_h) as usize;
-        if ix < iw && iy < ih {
-            counts[iy * iw + ix] += 1;
+/// An inclusive rectangle of canvas cells.
+#[derive(Clone, Copy)]
+struct CellRect {
+    x0: Coord,
+    y0: Coord,
+    x1: Coord,
+    y1: Coord,
+}
+
+impl CellRect {
+    /// The normal view's window (always at least 1x1).
+    fn of_view(vp: &Viewport) -> Self {
+        let (x0, y0) = vp.origin;
+        Self {
+            x0,
+            y0,
+            x1: x0 + vp.width.max(1) as Coord - 1,
+            y1: y0 + vp.height.max(1) as Coord - 1,
         }
     }
-    let capacity = (tile_w * tile_h) as f32;
 
-    // Density glyph grid.
-    let mut grid: Vec<Vec<char>> = (0..ih)
-        .map(|iy| {
-            (0..iw)
-                .map(|ix| {
-                    let c = counts[iy * iw + ix];
-                    if c == 0 {
-                        ' '
-                    } else {
-                        match c as f32 / capacity {
-                            r if r < SPARSE => '-',
-                            r if r < MEDIUM => '=',
-                            _ => '#',
-                        }
-                    }
-                })
+    /// The smallest rectangle covering this one and the cell `(x, y)`.
+    fn including(self, x: Coord, y: Coord) -> Self {
+        Self {
+            x0: self.x0.min(x),
+            y0: self.y0.min(y),
+            x1: self.x1.max(x),
+            y1: self.y1.max(y),
+        }
+    }
+}
+
+/// How canvas cells map onto the `iw` x `ih` inner minimap grid: each grid cell
+/// covers a `tile_w` x `tile_h` tile of canvas cells, counted from `origin`.
+struct Tiling {
+    origin: (Coord, Coord),
+    tile_w: Coord,
+    tile_h: Coord,
+    iw: usize,
+    ih: usize,
+}
+
+impl Tiling {
+    /// Tiles just large enough to fit `bounds` into the grid.
+    fn new(bounds: CellRect, iw: usize, ih: usize) -> Self {
+        let span_w = (bounds.x1 - bounds.x0 + 1).max(1);
+        let span_h = (bounds.y1 - bounds.y0 + 1).max(1);
+        Self {
+            origin: (bounds.x0, bounds.y0),
+            tile_w: ceil_div(span_w, iw as Coord).max(1),
+            tile_h: ceil_div(span_h, ih as Coord).max(1),
+            iw,
+            ih,
+        }
+    }
+
+    /// The (unclamped) grid cell holding canvas cell `(x, y)`.
+    fn cell_of(&self, x: Coord, y: Coord) -> (Coord, Coord) {
+        (
+            (x - self.origin.0) / self.tile_w,
+            (y - self.origin.1) / self.tile_h,
+        )
+    }
+
+    /// Canvas cells per grid cell.
+    fn capacity(&self) -> f32 {
+        (self.tile_w * self.tile_h) as f32
+    }
+}
+
+/// Ceiling division of positive operands; `i64::div_ceil` is still unstable.
+fn ceil_div(a: Coord, b: Coord) -> Coord {
+    (a + b - 1) / b
+}
+
+/// The density glyph grid: each inner cell drawn by how full its tile is.
+fn density_grid(cells: &[(Coord, Coord, char)], tiling: &Tiling) -> Vec<Vec<char>> {
+    let (iw, ih) = (tiling.iw, tiling.ih);
+    let mut counts = vec![0u32; iw * ih];
+    for &(x, y, _) in cells {
+        let (ix, iy) = tiling.cell_of(x, y);
+        if (ix as usize) < iw && (iy as usize) < ih {
+            counts[iy as usize * iw + ix as usize] += 1;
+        }
+    }
+    counts
+        .chunks(iw)
+        .map(|row| {
+            row.iter()
+                .map(|&c| density_glyph(c, tiling.capacity()))
                 .collect()
         })
-        .collect();
+        .collect()
+}
 
-    overlay_view_box(
-        &mut grid,
-        iw,
-        ih,
-        (minx, miny),
-        (tile_w, tile_h),
-        (vx0, vy0, vx1, vy1),
-    );
-
-    assemble(&grid, iw)
+/// The glyph for a tile holding `count` written cells out of `capacity`.
+fn density_glyph(count: u32, capacity: f32) -> char {
+    match count as f32 / capacity {
+        _ if count == 0 => ' ',
+        r if r < SPARSE => '-',
+        r if r < MEDIUM => '=',
+        _ => '#',
+    }
 }
 
 /// Draw the view rectangle onto the grid as a box, expanded to at least 2x2 (when
 /// space allows) so it's always a visible rectangle, not a single cell.
-fn overlay_view_box(
-    grid: &mut [Vec<char>],
-    iw: usize,
-    ih: usize,
-    (minx, miny): (Coord, Coord),
-    (tile_w, tile_h): (Coord, Coord),
-    (vx0, vy0, vx1, vy1): (Coord, Coord, Coord, Coord),
-) {
-    let mut x0 = (vx0 - minx) / tile_w;
-    let mut y0 = (vy0 - miny) / tile_h;
-    let mut x1 = (vx1 - minx) / tile_w;
-    let mut y1 = (vy1 - miny) / tile_h;
-    if x1 < x0 + 1 {
-        x1 = x0 + 1;
-    }
-    if y1 < y0 + 1 {
-        y1 = y0 + 1;
-    }
+fn overlay_view_box(grid: &mut [Vec<char>], tiling: &Tiling, view: CellRect) {
+    let (x0, y0) = tiling.cell_of(view.x0, view.y0);
+    let (x1, y1) = tiling.cell_of(view.x1, view.y1);
     let clamp = |v: Coord, hi: usize| v.clamp(0, hi as Coord - 1) as usize;
-    x0 = clamp(x0, iw) as Coord;
-    y0 = clamp(y0, ih) as Coord;
-    x1 = clamp(x1, iw) as Coord;
-    y1 = clamp(y1, ih) as Coord;
+    let (x1, y1) = (
+        clamp(x1.max(x0 + 1), tiling.iw),
+        clamp(y1.max(y0 + 1), tiling.ih),
+    );
+    let (x0, y0) = (clamp(x0, tiling.iw), clamp(y0, tiling.ih));
 
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            let (top, bot, left, right) = (y == y0, y == y1, x == x0, x == x1);
-            let ch = match (top, bot, left, right) {
-                (true, _, true, _) => '┌',
-                (true, _, _, true) => '┐',
-                (_, true, true, _) => '└',
-                (_, true, _, true) => '┘',
-                (true, _, _, _) | (_, true, _, _) => '─',
-                (_, _, true, _) | (_, _, _, true) => '│',
-                _ => continue, // interior: leave the content glyph visible
-            };
-            grid[y as usize][x as usize] = ch;
+    for (y, row) in grid.iter_mut().enumerate().take(y1 + 1).skip(y0) {
+        for (x, cell) in row.iter_mut().enumerate().take(x1 + 1).skip(x0) {
+            // The interior is left alone so the content glyph stays visible.
+            if let Some(ch) = box_glyph(y == y0, y == y1, x == x0, x == x1) {
+                *cell = ch;
+            }
         }
     }
+}
+
+/// The box-drawing glyph for a cell on a box's edges, or `None` inside it.
+fn box_glyph(top: bool, bot: bool, left: bool, right: bool) -> Option<char> {
+    Some(match (top, bot, left, right) {
+        (true, _, true, _) => '┌',
+        (true, _, _, true) => '┐',
+        (_, true, true, _) => '└',
+        (_, true, _, true) => '┘',
+        (true, _, _, _) | (_, true, _, _) => '─',
+        (_, _, true, _) | (_, _, _, true) => '│',
+        _ => return None,
+    })
 }
 
 /// Wrap the glyph grid in a box-drawing frame.
