@@ -44,7 +44,7 @@ pub fn type_char(app: &mut App, ch: char) {
     let (cx, cy) = app.cursor;
     let cols = crate::width::cols(ch);
     match app.mode {
-        EditMode::Insert => insert_write(&mut app.canvas, cx, cy, ch, cols),
+        EditMode::Insert => insert_write(&mut app.canvas, app.cursor, ch),
         EditMode::Overwrite => {
             app.canvas.set(cx, cy, ch);
             if cols == 2 {
@@ -60,7 +60,8 @@ pub fn type_char(app: &mut App, ch: char) {
 /// Insert-mode write of one char: push the rest of *its line* right by the
 /// char's width — a ≥2-blank gap ends the line, so a side column past it stays
 /// put — then drop the char into the opened space.
-fn insert_write(canvas: &mut Canvas, cx: Coord, cy: Coord, ch: char, cols: Coord) {
+fn insert_write(canvas: &mut Canvas, (cx, cy): (Coord, Coord), ch: char) {
+    let cols = crate::width::cols(ch);
     crate::layout::open_columns(canvas, cx, cy, cols);
     canvas.set(cx, cy, ch);
     if cols == 2 {
@@ -75,10 +76,8 @@ fn insert_write(canvas: &mut Canvas, cx: Coord, cy: Coord, ch: char, cols: Coord
 /// the chained-line prefixes in `calc` and `todo`.
 pub(crate) fn insert_str(app: &mut App, s: &str) {
     for ch in s.chars() {
-        let (cx, cy) = app.cursor;
-        let cols = crate::width::cols(ch);
-        insert_write(&mut app.canvas, cx, cy, ch, cols);
-        app.cursor.0 += cols;
+        insert_write(&mut app.canvas, app.cursor, ch);
+        app.cursor.0 += crate::width::cols(ch);
     }
     app.viewport.scroll_to_show(app.cursor);
 }
@@ -149,19 +148,8 @@ pub fn delete_pull(app: &mut App) {
 /// (touching nothing) when the cursor is not on a line, or sits at/past its end
 /// — there is no char there to delete and nothing to its right to pull.
 fn pull_line_left(canvas: &mut Canvas, cx: Coord, cy: Coord) -> bool {
-    let e = match crate::layout::line_bounds(canvas, cx, cy) {
-        Some((_, e)) if cx <= e => e,
-        // On a line but at or past its end: nothing under the cursor to delete.
-        Some(_) => return false,
-        // Parked on a blank — a typed space, or the hole an earlier delete left
-        // behind. `line_bounds` reaches one column past a line's end but not
-        // before its start, so claim the line starting one column right instead;
-        // without this, repeated deletes stick as soon as the cursor lands on a
-        // leading space. Refused when pulling would merge two columns.
-        None => match crate::layout::line_right_of_blank(canvas, cx, cy) {
-            Some((_, e)) => e,
-            None => return false,
-        },
+    let Some(e) = pull_end(canvas, cx, cy) else {
+        return false;
     };
     for x in cx..e {
         match canvas.get(x + 1, cy) {
@@ -171,6 +159,22 @@ fn pull_line_left(canvas: &mut Canvas, cx: Coord, cy: Coord) -> bool {
     }
     canvas.clear(e, cy);
     true
+}
+
+/// The end column of the line a delete at `(cx, cy)` pulls left, or `None` when
+/// there is nothing to pull: at or past a line's end, or off any line.
+///
+/// Parked on a blank — a typed space, or the hole an earlier delete left behind
+/// — `line_bounds` reaches one column past a line's end but not before its
+/// start, so this claims the line starting one column right instead; without
+/// that, repeated deletes stick as soon as the cursor lands on a leading space.
+/// Refused when pulling would merge two columns.
+fn pull_end(canvas: &Canvas, cx: Coord, cy: Coord) -> Option<Coord> {
+    match crate::layout::line_bounds(canvas, cx, cy) {
+        Some((_, e)) if cx <= e => Some(e),
+        Some(_) => None,
+        None => crate::layout::line_right_of_blank(canvas, cx, cy).map(|(_, e)| e),
+    }
 }
 
 /// Delete from the cursor to the end of its line (Ctrl+K). Segment-aware: only
@@ -260,24 +264,12 @@ pub fn line_end(app: &mut App) {
     }
 }
 
-/// Word-character columns on row `y`, ascending: populated cells whose char is
-/// not whitespace. A typed space *is* a stored cell, so whitespace — not just an
-/// absent cell — separates words. `canvas.cells()` is sorted by `(y, x)`.
-fn word_positions(canvas: &Canvas, y: Coord) -> Vec<Coord> {
-    canvas
-        .cells()
-        .into_iter()
-        .filter(|&(_, cy, c)| cy == y && !c.is_whitespace())
-        .map(|(x, _, _)| x)
-        .collect()
-}
-
 /// Columns that begin a word on row `y`: a word column whose left neighbor is not
 /// a word column (a gap, a blank, or whitespace marks the boundary).
 fn word_starts(canvas: &Canvas, y: Coord) -> Vec<Coord> {
     let mut starts = Vec::new();
     let mut prev: Option<Coord> = None;
-    for x in word_positions(canvas, y) {
+    for x in crate::layout::filled_columns(canvas, y) {
         if prev != Some(x - 1) {
             starts.push(x);
         }
@@ -288,7 +280,9 @@ fn word_starts(canvas: &Canvas, y: Coord) -> Vec<Coord> {
 
 /// Rightmost word column on row `y`, or `None` if the row has no word chars.
 fn last_populated(canvas: &Canvas, y: Coord) -> Option<Coord> {
-    word_positions(canvas, y).into_iter().next_back()
+    crate::layout::filled_columns(canvas, y)
+        .into_iter()
+        .next_back()
 }
 
 /// Reposition the cursor to column `tx` (same row), resetting the line anchor and
