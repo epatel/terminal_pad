@@ -52,8 +52,27 @@ pub fn to_json(app: &App) -> serde_json::Result<String> {
     serde_json::to_string_pretty(&doc)
 }
 
+/// Just the `version` field, read before the full document so a file from a
+/// newer build is refused with a clear message even if its shape has changed.
+#[derive(Deserialize)]
+struct VersionProbe {
+    version: u32,
+}
+
 /// Replace the app's canvas/bookmarks/cursor from a JSON string.
+///
+/// A document newer than [`FORMAT_VERSION`] is an error and leaves `app`
+/// untouched: loading it would silently drop the fields this build doesn't
+/// know, and the save on exit would then overwrite the file as an older
+/// version — losing data the user can't see.
 pub fn from_json(s: &str, app: &mut App) -> serde_json::Result<()> {
+    let VersionProbe { version } = serde_json::from_str(s)?;
+    if version > FORMAT_VERSION {
+        return Err(serde::de::Error::custom(format!(
+            "written by a newer terminal_pad (format v{version}; this build reads up to \
+             v{FORMAT_VERSION}) — upgrade terminal_pad to open it"
+        )));
+    }
     let doc: Doc = serde_json::from_str(s)?;
 
     let mut canvas = Canvas::new();
@@ -155,6 +174,49 @@ mod tests {
         from_json(v1, &mut app).unwrap();
         assert_eq!(app.cursor, (12, 7));
         assert_eq!(app.viewport.origin, (12, 7));
+    }
+
+    #[test]
+    fn newer_format_is_refused_and_leaves_app_untouched() {
+        // A future version may add or reshape fields; it must not load lossily.
+        let newer = format!(
+            r#"{{"version":{},"cells":[{{"x":0,"y":0,"c":"N"}}],"slots":[],"cursor":[3,4],"layers":[]}}"#,
+            FORMAT_VERSION + 1
+        );
+        let mut app = App::new();
+        editing::type_char(&mut app, 'k');
+        let before = app.canvas.cells();
+
+        let err = from_json(&newer, &mut app).unwrap_err().to_string();
+        assert!(err.contains("newer terminal_pad"), "{err}");
+        assert_eq!(app.canvas.cells(), before);
+        assert_eq!(app.cursor, (1, 0));
+    }
+
+    #[test]
+    fn newer_format_load_errors_so_the_file_is_never_clobbered() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("terminal_pad_newer_{}.tpad", std::process::id()));
+        let newer = format!(r#"{{"version":{}}}"#, FORMAT_VERSION + 1);
+        fs::write(&path, &newer).unwrap();
+
+        let mut app = App::new();
+        let err = load(&path, &mut app).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        // `load` failing is what makes `main` exit before the save-on-exit.
+        assert_eq!(fs::read_to_string(&path).unwrap(), newer);
+
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn current_and_older_versions_still_load() {
+        for v in 1..=FORMAT_VERSION {
+            let doc = format!(r#"{{"version":{v},"cells":[],"slots":[],"cursor":[1,2]}}"#);
+            let mut app = App::new();
+            from_json(&doc, &mut app).unwrap();
+            assert_eq!(app.cursor, (1, 2));
+        }
     }
 
     #[test]

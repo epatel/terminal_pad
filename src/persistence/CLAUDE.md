@@ -43,7 +43,7 @@ serde + serde_json, a versioned `Doc`:
 
 ## Failure modes
 - Malformed file → `load` returns an error; `main` prints it and exits non-zero (never silently discards the file). Older (v1) files load fine.
-- `version` is written but **not checked** on load: a file from a newer build would load with unknown fields dropped, and the exit auto-save would then overwrite it as v2.
+- **Newer file** (`version` > `FORMAT_VERSION`) → refused the same way, with an "upgrade terminal_pad" message, and `app` is left untouched. Only `version` is read first (`VersionProbe`), so the refusal is clear even if a future format reshapes other fields. Loading it lossily would drop unknown fields and the exit auto-save would then overwrite the file as an older version. Bump `FORMAT_VERSION` whenever the format changes in a way an older build can't round-trip.
 - JSON is fine for v1; a binary/RLE format is a later option if size/latency hurts.
 
 ## Ownership
