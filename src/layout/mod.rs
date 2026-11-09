@@ -10,8 +10,9 @@
 use crate::canvas::{Canvas, Coord};
 
 /// Filled columns on row `y`, ascending: populated cells whose char is not
-/// whitespace. `canvas.cells()` is sorted by `(y, x)`.
-fn filled_columns(canvas: &Canvas, y: Coord) -> Vec<Coord> {
+/// whitespace. `canvas.cells()` is sorted by `(y, x)`. Crate-visible: these are
+/// also `editing`'s word-jump columns.
+pub(crate) fn filled_columns(canvas: &Canvas, y: Coord) -> Vec<Coord> {
     canvas
         .cells()
         .into_iter()
@@ -110,30 +111,37 @@ fn displaced(canvas: &Canvas, span: (Coord, Coord), landing: Coord) -> Vec<(Coor
 /// segments that never overlap (a side column past a ≥2-blank gap) stay put.
 /// No-op when the band is free on `at_row` and the row below it.
 pub fn make_room(canvas: &mut Canvas, band: (Coord, Coord), at_row: Coord) {
-    // Flood downward: collect every segment that must shift down by one row.
-    let mut to_move: Vec<(Coord, Coord, Coord)> = Vec::new(); // (start, end, row)
-    let mut queue: Vec<(Coord, Coord, Coord)> = displaced(canvas, band, at_row);
+    let to_move = moving_segments(canvas, band, at_row);
+    shift_down(canvas, &to_move);
+}
+
+/// Flood downward from `band` on `at_row`: every segment `(start, end, row)`
+/// that must shift down one row for the band to open.
+fn moving_segments(
+    canvas: &Canvas,
+    band: (Coord, Coord),
+    at_row: Coord,
+) -> Vec<(Coord, Coord, Coord)> {
+    let mut to_move = Vec::new();
+    let mut queue = displaced(canvas, band, at_row);
     while let Some(seg @ (s, e, row)) = queue.pop() {
-        if to_move.contains(&seg) {
-            continue;
-        }
-        to_move.push(seg);
-        queue.extend(displaced(canvas, (s, e), row + 1));
-    }
-    if to_move.is_empty() {
-        return;
-    }
-    // Collect every populated cell of the moving segments, then re-place it one row
-    // lower — collect-then-write so the shift can't clobber itself. Segments on a
-    // row never share columns, so targets never collide.
-    let mut cells: Vec<(Coord, Coord, char)> = Vec::new();
-    for &(s, e, row) in &to_move {
-        for x in s..=e {
-            if let Some(c) = canvas.get(x, row) {
-                cells.push((x, row, c));
-            }
+        if !to_move.contains(&seg) {
+            to_move.push(seg);
+            queue.extend(displaced(canvas, (s, e), row + 1));
         }
     }
+    to_move
+}
+
+/// Move every populated cell of `segs` one row lower. Collect-then-write so
+/// the shift can't clobber itself; segments on a row never share columns, so
+/// targets never collide.
+fn shift_down(canvas: &mut Canvas, segs: &[(Coord, Coord, Coord)]) {
+    let cells: Vec<(Coord, Coord, char)> = segs
+        .iter()
+        .flat_map(|&(s, e, row)| (s..=e).map(move |x| (x, row)))
+        .filter_map(|(x, row)| canvas.get(x, row).map(|c| (x, row, c)))
+        .collect();
     for &(x, y, _) in &cells {
         canvas.clear(x, y);
     }
