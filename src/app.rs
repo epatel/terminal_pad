@@ -163,9 +163,16 @@ impl App {
     /// joined run from `layout::line_bounds`, so a side column past a ≥2-blank gap
     /// selects on its own. Copies nothing (Ctrl+C does). `None` off any line.
     pub fn select_line(&mut self) -> Option<String> {
+        let (s, e) = self.line_under_cursor()?;
+        self.select_span(s, e, self.cursor.1)
+    }
+
+    /// Bounds `(start, end)` of the line under the cursor, per
+    /// `layout::line_bounds` (the typing position one past the end counts).
+    /// `None` on a blank row or in a ≥2-blank gap.
+    pub fn line_under_cursor(&self) -> Option<(Coord, Coord)> {
         let (x, y) = self.cursor;
-        let (s, e) = crate::layout::line_bounds(&self.canvas, x, y)?;
-        self.select_span(s, e, y)
+        crate::layout::line_bounds(&self.canvas, x, y)
     }
 
     /// Select columns `s..=e` on row `y` as a one-row selection and return its

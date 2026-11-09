@@ -78,48 +78,63 @@ enum Action {
 /// the cursor on its line. Returns `false` (canvas untouched) when there is no
 /// tag, so the caller can fall through to the next Enter handler.
 pub fn enter(app: &mut App) -> bool {
-    let (cx, cy) = app.cursor;
-    let Some((s, _)) = crate::layout::line_bounds(&app.canvas, cx, cy) else {
+    let Some((prefix, body)) = tagged_input(app) else {
         return false;
     };
-    let left: Vec<char> = (s..cx)
-        .map(|x| app.canvas.get(x, cy).unwrap_or(' '))
-        .collect();
-    let Some(t) = tag_end(&left) else {
-        return false;
-    };
-    // Chained lines reuse the tag exactly as typed on this line (case kept).
-    let prefix: String = left[t - TAG_LEN..t].iter().chain([&' ']).collect();
-    let body: String = left[t..].iter().collect();
     match classify(body.trim()) {
-        Action::Eval(expr) => {
-            if expr.is_empty() {
-                app.status = "calc: empty expression".into();
-                return true;
-            }
-            match evalexpr::eval_with_context(&prepare(&expr), &app.calc.ctx) {
-                Ok(v) => insert_str(app, &format_value(&v)),
-                Err(e) => app.status = format!("calc: {e}"),
-            }
-        }
-        Action::Assign(name, rhs) => {
-            match evalexpr::eval_with_context(&prepare(&rhs), &app.calc.ctx) {
-                Ok(v) => {
-                    let shown = format_value(&v);
-                    if let Err(e) = app.calc.ctx.set_value(name.clone(), v) {
-                        app.status = format!("calc: {e}");
-                        return true;
-                    }
-                    insert_str(app, &format!(" = {shown}"));
-                    app.status = format!("calc: {name} = {shown}");
-                    chain_newline(app, &prefix);
-                }
-                Err(e) => app.status = format!("calc: {e}"),
-            }
-        }
+        Action::Eval(expr) => eval_in_place(app, &expr),
+        Action::Assign(name, rhs) => assign(app, name, &rhs, &prefix),
         Action::Chain => chain_newline(app, &prefix),
     }
     true
+}
+
+/// When a `[Calc]` tag lies left of the cursor on its line: the chained-line
+/// prefix (the tag exactly as typed on this line, case kept, plus a space) and
+/// the body between the tag and the cursor.
+fn tagged_input(app: &App) -> Option<(String, String)> {
+    let (s, _) = app.line_under_cursor()?;
+    let (cx, cy) = app.cursor;
+    let left: Vec<char> = (s..cx)
+        .map(|x| app.canvas.get(x, cy).unwrap_or(' '))
+        .collect();
+    let t = tag_end(&left)?;
+    let prefix = left[t - TAG_LEN..t].iter().chain([&' ']).collect();
+    Some((prefix, left[t..].iter().collect()))
+}
+
+/// Evaluate `expr` against the session variables.
+fn eval(app: &App, expr: &str) -> Result<Value, EvalexprError> {
+    evalexpr::eval_with_context(&prepare(expr), &app.calc.ctx)
+}
+
+/// `expr=` + Enter: insert the result after the `=`; errors go to the status line.
+fn eval_in_place(app: &mut App, expr: &str) {
+    if expr.is_empty() {
+        app.status = "calc: empty expression".into();
+        return;
+    }
+    match eval(app, expr) {
+        Ok(v) => insert_str(app, &format_value(&v)),
+        Err(e) => app.status = format!("calc: {e}"),
+    }
+}
+
+/// `name = rhs` + Enter: store the variable, append ` = result`, confirm in the
+/// status line, then chain a new tagged line. On an error the canvas is untouched.
+fn assign(app: &mut App, name: String, rhs: &str, prefix: &str) {
+    let stored = eval(app, rhs).and_then(|v| {
+        let shown = format_value(&v);
+        app.calc.ctx.set_value(name.clone(), v).map(|()| shown)
+    });
+    match stored {
+        Ok(shown) => {
+            insert_str(app, &format!(" = {shown}"));
+            app.status = format!("calc: {name} = {shown}");
+            chain_newline(app, prefix);
+        }
+        Err(e) => app.status = format!("calc: {e}"),
+    }
 }
 
 /// Char offset just past the rightmost case-insensitive `[calc]` in `text`,
@@ -180,38 +195,99 @@ fn prepare(expr: &str) -> String {
 /// A malformed or overflowing literal (`0x`, `0xFG`, `0b12`) is left as-is
 /// for `evalexpr` to reject, as is a digit run inside an identifier (`a0xF`).
 fn decode_radix(expr: &str) -> String {
-    let chars: Vec<char> = expr.chars().collect();
-    let joins = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
-    let mut out = String::with_capacity(expr.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let fresh = i == 0 || !joins(chars[i - 1]);
-        let radix = match (fresh, chars.get(i), chars.get(i + 1)) {
-            (true, Some('0'), Some('x' | 'X')) => Some(16),
-            (true, Some('0'), Some('b' | 'B')) => Some(2),
-            _ => None,
-        };
-        if let Some(r) = radix {
-            let start = i + 2;
-            let mut end = start;
-            while end < chars.len() && chars[end].is_digit(r) {
-                end += 1;
-            }
-            let digits: String = chars[start..end].iter().collect();
-            let clean = end >= chars.len() || !joins(chars[end]);
-            if clean
-                && !digits.is_empty()
-                && let Ok(v) = i128::from_str_radix(&digits, r)
-            {
-                out.push_str(&v.to_string());
-                i = end;
-                continue;
+    Scanner::new(expr).rewrite(Scanner::radix_literal)
+}
+
+/// An expression scanned char by char, rewriting the literals a matcher
+/// recognises and copying everything else through.
+struct Scanner {
+    chars: Vec<char>,
+}
+
+impl Scanner {
+    fn new(expr: &str) -> Self {
+        Self {
+            chars: expr.chars().collect(),
+        }
+    }
+
+    /// Copy the expression, replacing each literal `matcher` recognises — it
+    /// returns the replacement text and the index just past the literal.
+    fn rewrite(&self, matcher: impl Fn(&Self, usize) -> Option<(String, usize)>) -> String {
+        let mut out = String::with_capacity(self.chars.len());
+        let mut i = 0;
+        while i < self.chars.len() {
+            match matcher(self, i) {
+                Some((text, end)) => {
+                    out.push_str(&text);
+                    i = end;
+                }
+                None => {
+                    out.push(self.chars[i]);
+                    i += 1;
+                }
             }
         }
-        out.push(chars[i]);
-        i += 1;
+        out
     }
-    out
+
+    /// A well-formed `0x…` / `0b…` literal at `i`, as decimal. `None` when no
+    /// literal starts there: mid-identifier, no digits, glued to a following
+    /// identifier char, or overflowing.
+    fn radix_literal(&self, i: usize) -> Option<(String, usize)> {
+        if !self.starts_token(i) || self.chars.get(i) != Some(&'0') {
+            return None;
+        }
+        let radix = match self.chars.get(i + 1)? {
+            'x' | 'X' => 16,
+            'b' | 'B' => 2,
+            _ => return None,
+        };
+        let (digits, end) = self.digit_run(i + 2, radix);
+        if digits.is_empty() || !self.ends_token(end) {
+            return None;
+        }
+        let value = i128::from_str_radix(&digits, radix).ok()?;
+        Some((value.to_string(), end))
+    }
+
+    /// A bare integer literal at `i`, as a float (`5` → `5.0`). A digit run
+    /// glued to an identifier or a `.` is copied through unchanged.
+    fn int_literal(&self, i: usize) -> Option<(String, usize)> {
+        if !self.chars[i].is_ascii_digit() || !self.starts_token(i) {
+            return None;
+        }
+        let (mut digits, end) = self.digit_run(i, 10);
+        if self.ends_token(end) {
+            digits.push_str(".0");
+        }
+        Some((digits, end))
+    }
+
+    /// Whether a token can start at `i`: nothing before it joins onto it.
+    fn starts_token(&self, i: usize) -> bool {
+        i == 0 || !joins(self.chars[i - 1])
+    }
+
+    /// Whether a token ending just before `end` is cleanly delimited.
+    fn ends_token(&self, end: usize) -> bool {
+        self.chars.get(end).is_none_or(|&c| !joins(c))
+    }
+
+    /// The run of `radix` digits starting at `start`, and the index past it.
+    fn digit_run(&self, start: usize, radix: u32) -> (String, usize) {
+        let digits: String = self.chars[start..]
+            .iter()
+            .take_while(|c| c.is_digit(radix))
+            .collect();
+        let end = start + digits.len();
+        (digits, end)
+    }
+}
+
+/// Whether `c` glues onto an adjacent digit run (identifier chars and `.`).
+fn joins(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '.'
 }
 
 /// Rewrite bare integer literals as floats (`5` → `5.0`) so all arithmetic is
@@ -222,27 +298,7 @@ fn decode_radix(expr: &str) -> String {
 /// alphanumeric, `_`, or `.`. `format_value` trims the `.0` back off whole
 /// results, so `5+3=` still shows `8`.
 fn floatify(expr: &str) -> String {
-    let chars: Vec<char> = expr.chars().collect();
-    let mut out = String::with_capacity(expr.len());
-    let mut i = 0;
-    let joins = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
-    while i < chars.len() {
-        let c = chars[i];
-        out.push(c);
-        if c.is_ascii_digit() && (i == 0 || !joins(chars[i - 1])) {
-            let mut j = i;
-            while j + 1 < chars.len() && chars[j + 1].is_ascii_digit() {
-                j += 1;
-                out.push(chars[j]);
-            }
-            if j + 1 >= chars.len() || !joins(chars[j + 1]) {
-                out.push_str(".0");
-            }
-            i = j;
-        }
-        i += 1;
-    }
-    out
+    Scanner::new(expr).rewrite(Scanner::int_literal)
 }
 
 /// Render an evaluation result for the canvas. Floats are rounded to 10

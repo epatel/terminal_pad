@@ -15,10 +15,10 @@ const PREFIX: &str = "[ ] ";
 /// when the cursor's line does not start with a checkbox, so the caller can
 /// fall through to the normal newline.
 pub fn enter(app: &mut App) -> bool {
-    let (cx, cy) = app.cursor;
-    let Some((s, _)) = crate::layout::line_bounds(&app.canvas, cx, cy) else {
+    let Some((s, _)) = app.line_under_cursor() else {
         return false;
     };
+    let (cx, cy) = app.cursor;
     let at = |x| app.canvas.get(x, cy).unwrap_or(' ');
     let boxed = at(s) == '[' && matches!(at(s + 1), ' ' | 'x' | 'X') && at(s + 2) == ']';
     // The box must read `[ ] ` (blank after the bracket) and lie fully left of
