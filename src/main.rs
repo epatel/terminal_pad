@@ -98,49 +98,15 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    let path = match &parsed.name {
-        Some(name) => match data_dir().and_then(|base| pad_path_in(&base, name)) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("terminal_pad: {e}");
-                std::process::exit(2);
-            }
-        },
-        None => parsed
-            .positional
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("canvas.tpad")),
-    };
-
-    // The central pads dir (and any nested path) may not exist yet; the atomic
-    // save writes a sibling temp file, so the directory must be present first.
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-        && let Err(e) = fs::create_dir_all(parent)
-    {
-        eprintln!("terminal_pad: cannot create {}: {e}", parent.display());
-        std::process::exit(1);
+    let path = resolve_path(&parsed).unwrap_or_else(|e| die(2, &e));
+    if let Err(e) = ensure_parent_dir(&path) {
+        die(1, &e);
     }
 
     let mut app = App::new();
-    app.path = path.clone();
-
-    if parsed.clear {
-        // Start from an empty canvas; the cleared state is persisted by the
-        // save-on-exit (or Ctrl+S). Existing contents — even a malformed file —
-        // are simply not loaded.
-        app.status = format!("cleared {}", path.display());
-    } else {
-        // Load before entering the TUI; a malformed file aborts so we never
-        // clobber it on the save-at-exit below.
-        match persistence::load(&path, &mut app) {
-            Ok(true) => app.status = format!("loaded {}", path.display()),
-            Ok(false) => app.status = format!("new file {}", path.display()),
-            Err(e) => {
-                eprintln!("terminal_pad: cannot read {}: {e}", path.display());
-                std::process::exit(1);
-            }
-        }
+    app.path = path;
+    if let Err(e) = load_or_clear(&mut app, parsed.clear) {
+        die(1, &e);
     }
 
     install_panic_hook();
@@ -155,8 +121,59 @@ fn main() -> io::Result<()> {
     result
 }
 
+/// Print `msg` the way every startup error is reported and exit with `code`.
+fn die(code: i32, msg: &str) -> ! {
+    eprintln!("terminal_pad: {msg}");
+    std::process::exit(code);
+}
+
+/// The pad file the command line names: the central pad for `--name`, else the
+/// positional path, else `./canvas.tpad`.
+fn resolve_path(parsed: &Parsed) -> Result<PathBuf, String> {
+    match &parsed.name {
+        Some(name) => data_dir().and_then(|base| pad_path_in(&base, name)),
+        None => Ok(parsed
+            .positional
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("canvas.tpad"))),
+    }
+}
+
+/// The central pads dir (and any nested path) may not exist yet; the atomic
+/// save writes a sibling temp file, so the directory must be present first.
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display())),
+        _ => Ok(()),
+    }
+}
+
+/// Fill `app` from its pad file, or start empty for `--clear`, and say which in
+/// the status line.
+///
+/// `--clear` skips the load entirely — even a malformed file — and the cleared
+/// state is persisted by the save-on-exit (or Ctrl+S). Otherwise the load runs
+/// before the TUI starts, and a malformed file is an error so the caller aborts
+/// and the save-at-exit never clobbers it.
+fn load_or_clear(app: &mut App, clear: bool) -> Result<(), String> {
+    let shown = app.path.display().to_string();
+    if clear {
+        app.status = format!("cleared {shown}");
+        return Ok(());
+    }
+    let path = app.path.clone();
+    app.status = match persistence::load(&path, app) {
+        Ok(true) => format!("loaded {shown}"),
+        Ok(false) => format!("new file {shown}"),
+        Err(e) => return Err(format!("cannot read {shown}: {e}")),
+    };
+    Ok(())
+}
+
 /// Parsed command line. `name` selects a central pad, `positional` is a literal
 /// pad path; they are mutually exclusive.
+#[derive(Default)]
 struct Parsed {
     name: Option<String>,
     positional: Option<PathBuf>,
@@ -165,54 +182,50 @@ struct Parsed {
     version: bool,
 }
 
+impl Parsed {
+    /// Record one argument. `value` yields the next argument, for the flags
+    /// that take one.
+    fn apply<'a>(
+        &mut self,
+        arg: &str,
+        mut value: impl FnMut() -> Option<&'a String>,
+    ) -> Result<(), String> {
+        match arg {
+            "--name" => {
+                let v = value().ok_or("--name requires a value")?;
+                if self.name.replace(v.clone()).is_some() {
+                    return Err("--name given more than once".into());
+                }
+            }
+            "--clear" => self.clear = true,
+            "-h" | "--help" => self.help = true,
+            "-V" | "--version" => self.version = true,
+            // Any other dash-prefixed token (but not a lone "-") is an unknown flag.
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown option: {arg}"));
+            }
+            _ => {
+                if self.positional.replace(PathBuf::from(arg)).is_some() {
+                    return Err("more than one path argument given".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Parse the argument list (everything after the program name). Hand-rolled —
 /// the surface is tiny and a clap dependency isn't worth it.
 fn parse(args: &[String]) -> Result<Parsed, String> {
-    let mut name = None;
-    let mut positional: Option<PathBuf> = None;
-    let mut clear = false;
-    let mut help = false;
-    let mut version = false;
-
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
-        match a.as_str() {
-            "--name" => {
-                i += 1;
-                let v = args.get(i).ok_or("--name requires a value")?;
-                if name.is_some() {
-                    return Err("--name given more than once".into());
-                }
-                name = Some(v.clone());
-            }
-            "--clear" => clear = true,
-            "-h" | "--help" => help = true,
-            "-V" | "--version" => version = true,
-            // Any other dash-prefixed token (but not a lone "-") is an unknown flag.
-            _ if a.starts_with('-') && a != "-" => {
-                return Err(format!("unknown option: {a}"));
-            }
-            _ => {
-                if positional.is_some() {
-                    return Err("more than one path argument given".into());
-                }
-                positional = Some(PathBuf::from(a));
-            }
-        }
-        i += 1;
+    let mut parsed = Parsed::default();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        parsed.apply(arg, || it.next())?;
     }
-
-    if name.is_some() && positional.is_some() {
+    if parsed.name.is_some() && parsed.positional.is_some() {
         return Err("--name and a path argument cannot be combined".into());
     }
-    Ok(Parsed {
-        name,
-        positional,
-        clear,
-        help,
-        version,
-    })
+    Ok(parsed)
 }
 
 /// Resolve a `--name` value to `<base>/terminal_pad/<name>.tpad`, rejecting names
@@ -221,10 +234,15 @@ fn pad_path_in(base: &Path, name: &str) -> Result<PathBuf, String> {
     if name.is_empty() {
         return Err("--name must not be empty".into());
     }
-    if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+    if !is_bare_name(name) {
         return Err(format!("--name must be a bare name, not a path: {name:?}"));
     }
     Ok(base.join("terminal_pad").join(format!("{name}.tpad")))
+}
+
+/// A single path component: no separators, and not `.` or `..`.
+fn is_bare_name(name: &str) -> bool {
+    !matches!(name, "." | "..") && !name.contains(['/', '\\'])
 }
 
 /// The user data directory: `$XDG_DATA_HOME` if set, else `~/.local/share`.
@@ -294,38 +312,57 @@ fn run(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
     // the size now and clamp so the cursor is on screen even if the terminal is
     // smaller than at save time. A same-size reopen is a no-op (origin preserved).
     let size = terminal.size()?;
-    app.viewport.width = size.width;
-    app.viewport.height = size.height.saturating_sub(render::STATUS_HEIGHT);
-    app.viewport.scroll_to_show(app.cursor);
+    sync_size(app, size.width, size.height);
 
     loop {
         terminal.draw(|frame| render::draw(frame, app))?;
-        match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                // Esc clears an active selection before it falls through to quit.
-                if key.code == KeyCode::Esc && app.search.is_some() {
-                    // Esc cancels a find before it can reach quit.
-                    find::cancel(app);
-                } else if key.code == KeyCode::Esc && app.selection.is_some() {
-                    app.selection = None;
-                } else if should_quit(&key) {
-                    break;
-                } else {
-                    handle_key(app, &key);
-                }
-            }
-            Event::Mouse(m) => handle_mouse(app, &m),
-            Event::Paste(text) => editing::paste(app, &text),
-            Event::Resize(w, h) => {
-                // Re-sync the viewport size and keep the cursor on screen.
-                app.viewport.width = w;
-                app.viewport.height = h.saturating_sub(render::STATUS_HEIGHT);
-                app.viewport.scroll_to_show(app.cursor);
-            }
-            _ => {}
+        if handle_event(app, event::read()?) == Flow::Quit {
+            return Ok(());
         }
     }
-    Ok(())
+}
+
+/// Whether the event loop keeps going after an event.
+#[derive(PartialEq, Eq)]
+enum Flow {
+    Continue,
+    Quit,
+}
+
+/// Size the viewport to a `width` x `height` terminal (status line excluded)
+/// and keep the cursor on screen.
+fn sync_size(app: &mut App, width: u16, height: u16) {
+    app.viewport.width = width;
+    app.viewport.height = height.saturating_sub(render::STATUS_HEIGHT);
+    app.viewport.scroll_to_show(app.cursor);
+}
+
+/// Route one terminal event.
+fn handle_event(app: &mut App, ev: Event) -> Flow {
+    match ev {
+        Event::Key(key) if key.kind == KeyEventKind::Press => return handle_press(app, &key),
+        Event::Mouse(m) => handle_mouse(app, &m),
+        Event::Paste(text) => editing::paste(app, &text),
+        Event::Resize(w, h) => sync_size(app, w, h),
+        _ => {}
+    }
+    Flow::Continue
+}
+
+/// A key press. Esc first cancels a live find, then clears a selection, and
+/// only then reaches quit.
+fn handle_press(app: &mut App, key: &KeyEvent) -> Flow {
+    let esc = key.code == KeyCode::Esc;
+    if esc && app.search.is_some() {
+        find::cancel(app);
+    } else if esc && app.selection.is_some() {
+        app.selection = None;
+    } else if should_quit(key) {
+        return Flow::Quit;
+    } else {
+        handle_key(app, key);
+    }
+    Flow::Continue
 }
 
 /// Rows the scroll wheel pans per notch.
@@ -352,21 +389,7 @@ fn handle_mouse(app: &mut App, m: &MouseEvent) {
     let sy = m.row.min(h - 1);
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) if m.row < h && m.column < w => {
-            let cell = app.viewport.canvas_at(sx, sy);
-            // Double-click selects the word under the pointer, triple-click its
-            // whole line — selection only; Ctrl+C copies, like any other block.
-            match app.register_click(Instant::now(), cell) {
-                n @ (2 | 3) => {
-                    app.click_to(sx, sy);
-                    app.selection = None;
-                    if n == 2 {
-                        app.select_word();
-                    } else {
-                        app.select_line();
-                    }
-                }
-                _ => app.begin_drag(sx, sy),
-            }
+            left_press(app, sx, sy)
         }
         MouseEventKind::Drag(MouseButton::Left) => app.update_drag(sx, sy),
         MouseEventKind::Up(MouseButton::Left) => app.end_drag(),
@@ -375,6 +398,25 @@ fn handle_mouse(app: &mut App, m: &MouseEvent) {
         MouseEventKind::ScrollRight => app.scroll_cols(-HWHEEL_STEP),
         MouseEventKind::ScrollLeft => app.scroll_cols(HWHEEL_STEP),
         _ => {}
+    }
+}
+
+/// A left press on screen cell `(sx, sy)`. Double-click selects the word under
+/// the pointer, triple-click its whole line — selection only; Ctrl+C copies,
+/// like any other block. A single click starts a drag.
+fn left_press(app: &mut App, sx: u16, sy: u16) {
+    let cell = app.viewport.canvas_at(sx, sy);
+    let clicks = app.register_click(Instant::now(), cell);
+    if !(2..=3).contains(&clicks) {
+        app.begin_drag(sx, sy);
+        return;
+    }
+    app.click_to(sx, sy);
+    app.selection = None;
+    if clicks == 2 {
+        app.select_word();
+    } else {
+        app.select_line();
     }
 }
 
@@ -399,169 +441,141 @@ fn save_now(app: &mut App) {
     };
 }
 
-/// Route a key press. Ctrl+H toggles the help overlay (any key dismisses it);
-/// Ctrl+Z toggles the overview; while zoomed out only save and toggle are
-/// accepted (it's a read-only view). Otherwise: navigation (M4, plus Alt+Left/
-/// Right word jump), editing (M5/M6), and bookmarks (M7).
-fn handle_key(app: &mut App, key: &KeyEvent) {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
+/// The modifier keys held for a key press.
+#[derive(Clone, Copy)]
+struct Mods {
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+}
 
-    // Help overlay: Ctrl+H toggles it; while it's showing any key dismisses it
-    // (it's a read-only cheat sheet). Checked before everything else.
+impl Mods {
+    fn of(key: &KeyEvent) -> Self {
+        Self {
+            ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+            shift: key.modifiers.contains(KeyModifiers::SHIFT),
+            alt: key.modifiers.contains(KeyModifiers::ALT),
+        }
+    }
+}
+
+/// Route a key press. Each layer either consumes the key or passes it on, in
+/// priority order: the help overlay, a live find, the overview (Ctrl+Z toggles
+/// it), selection actions, and finally the editor — navigation (M4, plus
+/// Alt+Left/Right word jump), editing (M5/M6), and bookmarks (M7).
+fn handle_key(app: &mut App, key: &KeyEvent) {
+    let m = Mods::of(key);
+    let consumed = help_key(app, key.code, m)
+        || find_key(app, key.code, m)
+        || overview_key(app, key.code, m)
+        || selection_key(app, key.code, m);
+    if !consumed {
+        editor_key(app, key.code, m);
+    }
+}
+
+/// Help overlay: Ctrl+H opens it; while it's showing any key dismisses it (it's
+/// a read-only cheat sheet). Checked before everything else.
+fn help_key(app: &mut App, code: KeyCode, m: Mods) -> bool {
     if app.help {
         app.help = false;
-        return;
+        return true;
     }
-    if ctrl && key.code == KeyCode::Char('h') {
+    if m.ctrl && code == KeyCode::Char('h') {
         app.help = true;
-        return;
+        return true;
     }
+    false
+}
 
-    // A live find (Ctrl+F) owns the keyboard while it runs: typing narrows it,
-    // Ctrl+F steps to the next hit, Backspace edits it (and walks out of the
-    // search on an empty query), Enter keeps the landing spot. Esc cancels,
-    // handled in the event loop before it can reach quit. Any other key accepts
-    // the search and is swallowed.
-    if app.search.is_some() {
-        match key.code {
-            KeyCode::Enter => find::accept(app),
-            KeyCode::Backspace => find::backspace(app),
-            KeyCode::Char('f') if ctrl => find::advance(app),
-            KeyCode::Char(c) if !ctrl && !alt => find::push(app, c),
-            _ => find::accept(app),
-        }
-        return;
+/// A live find (Ctrl+F) owns the keyboard while it runs: typing narrows it,
+/// Ctrl+F steps to the next hit, Backspace edits it (and walks out of the
+/// search on an empty query), Enter keeps the landing spot. Esc cancels,
+/// handled in the event loop before it can reach quit. Any other key accepts
+/// the search and is swallowed.
+fn find_key(app: &mut App, code: KeyCode, m: Mods) -> bool {
+    if app.search.is_none() {
+        return false;
     }
+    match code {
+        KeyCode::Enter => find::accept(app),
+        KeyCode::Backspace => find::backspace(app),
+        KeyCode::Char('f') if m.ctrl => find::advance(app),
+        KeyCode::Char(c) if !m.ctrl && !m.alt => find::push(app, c),
+        _ => find::accept(app),
+    }
+    true
+}
 
-    // Ctrl+Z toggles overview in either mode.
-    if ctrl && key.code == KeyCode::Char('z') {
+/// Ctrl+Z toggles the overview in either mode. In the overview, plain arrows pan
+/// the view (and cursor) by a screenful for quick navigation; Shift+arrows pan by
+/// 1/3 screen, the same gesture as in the normal editor. Saving is allowed;
+/// editing is not, so every other key is swallowed.
+fn overview_key(app: &mut App, code: KeyCode, m: Mods) -> bool {
+    if m.ctrl && code == KeyCode::Char('z') {
         app.toggle_zoom();
-        return;
+        return true;
     }
-    // In the overview, plain arrows pan the view (and cursor) by a screenful for
-    // quick navigation; Shift+arrows pan by 1/3 screen, the same gesture as in the
-    // normal editor. Saving is allowed; editing is not.
-    if app.zoom == ZoomMode::Overview {
-        match key.code {
-            KeyCode::Left if shift => app.jump_view(-1, 0),
-            KeyCode::Right if shift => app.jump_view(1, 0),
-            KeyCode::Up if shift => app.jump_view(0, -1),
-            KeyCode::Down if shift => app.jump_view(0, 1),
-            KeyCode::Left => app.pan_view(-1, 0),
-            KeyCode::Right => app.pan_view(1, 0),
-            KeyCode::Up => app.pan_view(0, -1),
-            KeyCode::Down => app.pan_view(0, 1),
-            KeyCode::Char('s') if ctrl => save_now(app),
-            _ => {}
+    if app.zoom != ZoomMode::Overview {
+        return false;
+    }
+    if let Some((dx, dy)) = arrow_delta(code) {
+        if m.shift {
+            app.jump_view(dx, dy);
+        } else {
+            app.pan_view(dx, dy);
         }
-        return;
+    } else if m.ctrl && code == KeyCode::Char('s') {
+        save_now(app);
     }
+    true
+}
 
-    // Selection actions. Ctrl+C copies (and keeps the selection); Ctrl+V pastes
-    // the internal block; Delete/Backspace on a selection clears the block. Any
-    // other key dismisses a lingering selection so the highlight doesn't stick.
-    if ctrl && key.code == KeyCode::Char('c') {
-        if let Some(text) = app.copy_selection() {
-            copy_to_system(app, &text);
-        }
-        return;
+/// The unit direction of an arrow key, or `None` for any other key.
+fn arrow_delta(code: KeyCode) -> Option<(i64, i64)> {
+    match code {
+        KeyCode::Left => Some((-1, 0)),
+        KeyCode::Right => Some((1, 0)),
+        KeyCode::Up => Some((0, -1)),
+        KeyCode::Down => Some((0, 1)),
+        _ => None,
     }
-    if ctrl && key.code == KeyCode::Char('v') {
-        app.paste_clip();
-        return;
-    }
-    if app.selection.is_some() && matches!(key.code, KeyCode::Delete | KeyCode::Backspace) {
-        app.delete_selection();
-        return;
-    }
-    app.selection = None;
+}
 
-    match key.code {
-        KeyCode::Left => {
-            if alt {
-                editing::word_left(app)
-            } else if shift {
-                app.jump_view(-1, 0)
-            } else {
-                app.move_cursor(-1, 0)
+/// Selection actions. Ctrl+C copies (and keeps the selection); Ctrl+V pastes the
+/// internal block; Delete/Backspace on a selection clears the block. Any other
+/// key dismisses a lingering selection so the highlight doesn't stick, then
+/// passes on to the editor.
+fn selection_key(app: &mut App, code: KeyCode, m: Mods) -> bool {
+    match code {
+        KeyCode::Char('c') if m.ctrl => {
+            if let Some(text) = app.copy_selection() {
+                copy_to_system(app, &text);
             }
         }
-        KeyCode::Right => {
-            if alt {
-                editing::word_right(app)
-            } else if shift {
-                app.jump_view(1, 0)
-            } else {
-                app.move_cursor(1, 0)
-            }
+        KeyCode::Char('v') if m.ctrl => app.paste_clip(),
+        KeyCode::Delete | KeyCode::Backspace if app.selection.is_some() => app.delete_selection(),
+        _ => {
+            app.selection = None;
+            return false;
         }
-        KeyCode::Up => {
-            if shift {
-                app.jump_view(0, -1)
-            } else {
-                app.move_cursor(0, -1)
-            }
-        }
-        KeyCode::Down => {
-            if shift {
-                app.jump_view(0, 1)
-            } else {
-                app.move_cursor(0, 1)
-            }
-        }
-        // Ctrl+A / Ctrl+E — start / end of the line under the cursor. Plain
-        // ASCII control codes (0x01/0x05), so no Kitty protocol needed.
-        KeyCode::Char('a') if ctrl => editing::line_start(app),
-        KeyCode::Char('e') if ctrl => editing::line_end(app),
-        // Ctrl+D / Ctrl+K — delete char (pull the line left) / delete to the
-        // line's end. Segment-aware; plain ASCII control codes.
-        KeyCode::Char('d') if ctrl => editing::delete_pull(app),
-        KeyCode::Char('k') if ctrl => editing::kill_to_end(app),
-        // Insert/Overwrite toggle. Ctrl+I needs a terminal that distinguishes it
-        // from Tab (Kitty keyboard protocol — see notes).
-        KeyCode::Char('i') if ctrl => editing::toggle_mode(app),
-        // Ctrl+B — toggle banner (figlet big-letter) typing. Plain ASCII
-        // control code (0x02), no Kitty protocol needed.
-        KeyCode::Char('b') if ctrl => banner::toggle(app),
-        // Ctrl+S — save now.
-        KeyCode::Char('s') if ctrl => save_now(app),
+    }
+    true
+}
+
+/// The normal editor: arrows, Ctrl commands, deletion, Enter and typing.
+fn editor_key(app: &mut App, code: KeyCode, m: Mods) {
+    if let Some((dx, dy)) = arrow_delta(code) {
+        return arrow_key(app, dx, dy, m);
+    }
+    match code {
+        KeyCode::Char(c) if m.ctrl => ctrl_key(app, c, m.shift),
         KeyCode::Backspace => editing::backspace(app),
         KeyCode::Delete => editing::delete(app),
-        // In banner mode Enter just drops a glyph height (a split would shred
-        // the art); otherwise it goes through the calculator first (a [Calc]
-        // tag evaluates / assigns / chains, M18), then checkbox chaining (a
-        // leading [ ] / [x] prefixes the new line with `[ ] `, M20), else a
-        // normal newline.
-        KeyCode::Enter => {
-            if app.banner {
-                banner::newline(app)
-            } else if !calc::enter(app) && !todo::enter(app) {
-                editing::newline(app)
-            }
-        }
-        // Ctrl+F — open a live find over the canvas. A `#name` tag is just
-        // text, so typing `#api` searches for one. Plain ASCII control code
-        // (0x06), so unlike the Ctrl+digit bindings it works in any terminal.
-        KeyCode::Char('f') if ctrl => find::open(app),
-        // Locations: Ctrl+1..9 jump, Ctrl+Shift+1..9 save. Needs a terminal that
-        // reports Ctrl+digit modifiers (Kitty keyboard protocol — see notes).
-        KeyCode::Char(c) if ctrl && locations::slot_for_digit(c).is_some() => {
-            let slot = locations::slot_for_digit(c).unwrap();
-            if shift {
-                locations::save(app, slot)
-            } else {
-                locations::jump(app, slot)
-            }
-        }
-        // Printable input — ignore when Ctrl/Alt is held (those are commands).
+        KeyCode::Enter => enter_key(app),
+        // Printable input — ignore when Alt is held (those are commands).
         // Banner mode stamps a figlet glyph instead of a single cell.
-        KeyCode::Char(c)
-            if !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-        {
+        KeyCode::Char(c) if !m.alt => {
             if app.banner {
                 banner::type_char(app, c)
             } else {
@@ -569,6 +583,61 @@ fn handle_key(app: &mut App, key: &KeyEvent) {
             }
         }
         _ => {}
+    }
+}
+
+/// An arrow key in the editor: Alt+Left/Right jump by a word, Shift jumps the
+/// view by 1/3 screen, a plain arrow moves the cursor one cell.
+fn arrow_key(app: &mut App, dx: i64, dy: i64, m: Mods) {
+    if m.alt && dy == 0 {
+        if dx < 0 {
+            editing::word_left(app)
+        } else {
+            editing::word_right(app)
+        }
+    } else if m.shift {
+        app.jump_view(dx, dy)
+    } else {
+        app.move_cursor(dx, dy)
+    }
+}
+
+/// Ctrl+letter / Ctrl+digit commands in the editor. Most are plain ASCII
+/// control codes that work in any terminal; Ctrl+I and the Ctrl+digit bindings
+/// need one that reports them distinctly (Kitty keyboard protocol — see notes).
+fn ctrl_key(app: &mut App, c: char, shift: bool) {
+    match c {
+        // Start / end of the line under the cursor.
+        'a' => editing::line_start(app),
+        'e' => editing::line_end(app),
+        // Delete char (pull the line left) / delete to the line's end.
+        'd' => editing::delete_pull(app),
+        'k' => editing::kill_to_end(app),
+        // Insert/Overwrite toggle (Ctrl+I is Tab without the Kitty protocol).
+        'i' => editing::toggle_mode(app),
+        // Banner (figlet big-letter) typing.
+        'b' => banner::toggle(app),
+        's' => save_now(app),
+        // Open a live find. A `#name` tag is just text, so `#api` finds one.
+        'f' => find::open(app),
+        // Locations: Ctrl+1..9 jump, Ctrl+Shift+1..9 save.
+        _ => match locations::slot_for_digit(c) {
+            Some(slot) if shift => locations::save(app, slot),
+            Some(slot) => locations::jump(app, slot),
+            None => {}
+        },
+    }
+}
+
+/// Enter. In banner mode it just drops a glyph height (a split would shred the
+/// art); otherwise it goes through the calculator first (a [Calc] tag
+/// evaluates / assigns / chains, M18), then checkbox chaining (a leading
+/// [ ] / [x] prefixes the new line with `[ ] `, M20), else a normal newline.
+fn enter_key(app: &mut App) {
+    if app.banner {
+        banner::newline(app)
+    } else if !calc::enter(app) && !todo::enter(app) {
+        editing::newline(app)
     }
 }
 
